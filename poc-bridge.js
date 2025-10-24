@@ -10,7 +10,9 @@ const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
 const NodeRSA = require('node-rsa');
-const { BotFrameworkAdapter, TurnContext, TeamsInfo } = require('botbuilder');
+const FormData = require('form-data');
+const mime = require('mime-types');
+const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
 
 // ============================================================================
 // Configuration
@@ -157,25 +159,93 @@ class FreshchatClient {
     }
 
     /**
+     * Upload a file to Freshchat
+     */
+    async uploadFile(fileBuffer, filename, contentType) {
+        try {
+            console.log(`[Freshchat] Uploading file: ${filename} (${contentType})`);
+
+            const formData = new FormData();
+            formData.append('file', fileBuffer, {
+                filename: filename,
+                contentType: contentType
+            });
+
+            const response = await axios.post(`${this.apiUrl}/files/upload`, formData, {
+                headers: {
+                    'Authorization': `Bearer ${this.apiKey}`,
+                    ...formData.getHeaders()
+                },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity
+            });
+
+            console.log(`[Freshchat] File uploaded successfully:`, response.data);
+            return response.data;
+        } catch (error) {
+            console.error('[Freshchat] Error uploading file:', error.response?.data || error.message);
+            throw error;
+        }
+    }
+
+    /**
      * Send a message to an existing Freshchat conversation
      */
-    async sendMessage(conversationId, userId, message) {
+    async sendMessage(conversationId, userId, message, attachments = []) {
         try {
             console.log(`[Freshchat] Sending message to conversation: ${conversationId}`);
 
-            const response = await this.axiosInstance.post(`/conversations/${conversationId}/messages`, {
-                message_parts: [
-                    {
-                        text: {
-                            content: message
-                        }
+            const messageParts = [];
+
+            // Add text if provided
+            if (message) {
+                messageParts.push({
+                    text: {
+                        content: message
                     }
-                ],
+                });
+            }
+
+            // Add file attachments
+            for (const attachment of attachments) {
+                const filePart = {
+                    file: {
+                        name: attachment.name,
+                        content_type: attachment.content_type,
+                        file_size_in_bytes: attachment.file_size_in_bytes
+                    }
+                };
+
+                // file_hash를 사용하거나 url을 사용
+                if (attachment.file_hash) {
+                    filePart.file.file_hash = attachment.file_hash;
+                } else if (attachment.url) {
+                    filePart.file.url = attachment.url;
+                }
+
+                messageParts.push(filePart);
+            }
+
+            const response = await this.axiosInstance.post(`/conversations/${conversationId}/messages`, {
+                message_parts: messageParts,
                 actor_type: 'user',
                 actor_id: userId
             });
 
-            console.log(`[Freshchat] Message sent successfully`);
+            console.log(`[Freshchat] Message sent successfully, Message ID: ${response.data.id}`);
+
+            // 메시지 전송 후 실제 파일 URL을 얻기 위해 메시지 조회
+            if (attachments.length > 0) {
+                try {
+                    const messageResponse = await this.axiosInstance.get(
+                        `/conversations/${conversationId}/messages/${response.data.id}`
+                    );
+                    console.log('[Freshchat] Message details:', JSON.stringify(messageResponse.data, null, 2));
+                } catch (err) {
+                    console.error('[Freshchat] Error fetching message details:', err.response?.data || err.message);
+                }
+            }
+
             return response.data;
         } catch (error) {
             console.error('[Freshchat] Error sending message:', error.response?.data || error.message);
@@ -257,6 +327,28 @@ function verifyFreshchatSignature(payload, signature) {
 // ============================================================================
 
 /**
+ * Download file from Teams
+ */
+async function downloadTeamsAttachment(context, attachment) {
+    try {
+        // Bot Framework Connector를 사용하여 올바른 토큰 얻기
+        const token = await context.adapter.credentials.getToken();
+
+        const response = await axios.get(attachment.contentUrl, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            },
+            responseType: 'arraybuffer'
+        });
+
+        return Buffer.from(response.data);
+    } catch (error) {
+        console.error('[Teams] Error downloading attachment:', error.message);
+        throw error;
+    }
+}
+
+/**
  * Main bot logic - handles incoming messages from Teams
  */
 async function handleTeamsMessage(context) {
@@ -266,7 +358,8 @@ async function handleTeamsMessage(context) {
     console.log('\n========================================');
     console.log('[Teams → Freshchat]');
     console.log(`From: ${activity.from.name} (${activity.from.id})`);
-    console.log(`Message: ${activity.text}`);
+    console.log(`Message: ${activity.text || '[No text]'}`);
+    console.log(`Attachments: ${activity.attachments?.length || 0}`);
     console.log(`Conversation ID: ${activity.conversation.id}`);
     console.log('========================================\n');
 
@@ -275,12 +368,46 @@ async function handleTeamsMessage(context) {
     let mapping = conversationMap.get(teamsConvId);
 
     try {
+        // Process attachments
+        const freshchatAttachments = [];
+        if (activity.attachments && activity.attachments.length > 0) {
+            console.log(`[Teams] Processing ${activity.attachments.length} attachment(s)...`);
+
+            for (const attachment of activity.attachments) {
+                try {
+                    console.log(`[Teams] Attachment: ${attachment.name} (${attachment.contentType})`);
+
+                    // Download file from Teams
+                    const fileBuffer = await downloadTeamsAttachment(context, attachment);
+
+                    // Upload to Freshchat
+                    const uploadedFile = await freshchatClient.uploadFile(
+                        fileBuffer,
+                        attachment.name,
+                        attachment.contentType
+                    );
+
+                    // Freshchat API returns: file_name, file_size, file_content_type, file_extension_type, file_hash
+                    freshchatAttachments.push({
+                        name: uploadedFile.file_name || attachment.name,
+                        file_size_in_bytes: uploadedFile.file_size || fileBuffer.length,
+                        content_type: uploadedFile.file_content_type || attachment.contentType,
+                        file_hash: uploadedFile.file_hash
+                    });
+
+                    console.log(`[Teams → Freshchat] File uploaded: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
+                } catch (error) {
+                    console.error(`[Teams] Failed to process attachment ${attachment.name}:`, error.message);
+                }
+            }
+        }
+
         if (!mapping) {
             // First message in this conversation - create new Freshchat conversation
             const freshchatConv = await freshchatClient.createConversation(
                 activity.from.id,
                 activity.from.name,
-                activity.text
+                activity.text || '[File attachment]'
             );
 
             // Store the mapping
@@ -294,17 +421,31 @@ async function handleTeamsMessage(context) {
             reverseMap.set(freshchatConv.conversation_id, teamsConvId);
 
             console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${freshchatConv.conversation_id})`);
+
+            // Send attachments if any
+            if (freshchatAttachments.length > 0) {
+                await freshchatClient.sendMessage(
+                    mapping.freshchatConvId,
+                    mapping.freshchatUserId,
+                    null,
+                    freshchatAttachments
+                );
+            }
         } else {
             // Existing conversation - send message to Freshchat
             await freshchatClient.sendMessage(
                 mapping.freshchatConvId,
                 mapping.freshchatUserId,
-                activity.text
+                activity.text,
+                freshchatAttachments
             );
         }
 
         // Acknowledge receipt
-        await context.sendActivity('✓ Message forwarded to Freshchat');
+        const attachmentText = freshchatAttachments.length > 0
+            ? ` (${freshchatAttachments.length} file(s))`
+            : '';
+        await context.sendActivity(`✓ Message forwarded to Freshchat${attachmentText}`);
     } catch (error) {
         console.error('[Error] Failed to forward message to Freshchat:', error);
         await context.sendActivity('❌ Failed to forward message to Freshchat. Please check logs.');
@@ -411,27 +552,46 @@ app.post('/freshchat/webhook', async (req, res) => {
                 return res.sendStatus(200);
             }
 
-            // Extract message text
+            // Extract message text and files
             let messageText = '';
+            const fileAttachments = [];
+
             if (message.message_parts && message.message_parts.length > 0) {
-                const textPart = message.message_parts.find(part => part.text);
-                if (textPart && textPart.text.content) {
-                    messageText = textPart.text.content;
+                for (const part of message.message_parts) {
+                    // Extract text
+                    if (part.text && part.text.content) {
+                        messageText = part.text.content;
+                    }
+
+                    // Extract file attachments
+                    if (part.file) {
+                        fileAttachments.push({
+                            contentType: part.file.content_type || 'application/octet-stream',
+                            contentUrl: part.file.url,
+                            name: part.file.name
+                        });
+                    }
                 }
             }
 
-            if (!messageText) {
-                console.log('[Freshchat] No text content found in message');
+            if (!messageText && fileAttachments.length === 0) {
+                console.log('[Freshchat] No content found in message');
                 return res.sendStatus(200);
             }
 
-            console.log(`[Freshchat → Teams] Forwarding message: "${messageText}"`);
+            console.log(`[Freshchat → Teams] Forwarding message: "${messageText || '[File only]'}"`);
+            console.log(`[Freshchat → Teams] Attachments: ${fileAttachments.length}`);
 
             // Send message to Teams
             await adapter.continueConversation(
                 mapping.conversationReference,
                 async (turnContext) => {
-                    await turnContext.sendActivity(`**Agent Reply:**\n${messageText}`);
+                    const messageActivity = {
+                        type: 'message',
+                        text: messageText ? `**Agent Reply:**\n${messageText}` : '**Agent sent a file:**',
+                        attachments: fileAttachments.length > 0 ? fileAttachments : undefined
+                    };
+                    await turnContext.sendActivity(messageActivity);
                 }
             );
 

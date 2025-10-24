@@ -1,70 +1,29 @@
-# Teams App Manifest
+# Teams App Package
 
-This directory contains the Microsoft Teams app manifest and icons for sideloading the bot.
+## 아이콘 파일 필요
 
-## Required Files
+Teams 앱을 배포하려면 다음 아이콘 파일이 필요합니다:
 
-1. **manifest.json** - The app manifest (already created)
-2. **color.png** - Color icon (192x192 pixels)
-3. **outline.png** - Outline icon (32x32 pixels)
+1. **color.png** - 192x192 픽셀, 풀컬러 아이콘
+2. **outline.png** - 32x32 픽셀, 투명 배경의 흰색 아웃라인 아이콘
 
-## Creating Icons
+### 임시 해결책
 
-You need to create two PNG icon files:
+아이콘 없이 테스트하려면:
+1. 임의의 PNG 파일을 color.png, outline.png로 이름 변경
+2. 또는 https://www.canva.com 등에서 간단한 아이콘 생성
 
-### color.png (192x192 pixels)
-- Full color icon with transparent or white background
-- Will be displayed in the Teams app catalog and bot profile
+### 패키지 생성
 
-### outline.png (32x32 pixels)
-- Monochrome outline icon with transparent background
-- Will be displayed in the Teams left navigation bar
+```bash
+zip -r FreshchatBridge.zip manifest.json color.png outline.png
+```
 
-### Quick Icon Generation Options:
+### Teams에 업로드
 
-1. **Use an online icon generator:**
-   - Visit https://www.favicon-generator.org/
-   - Upload a simple logo or create one
-   - Download as PNG and resize to required dimensions
-
-2. **Use GIMP or Photoshop:**
-   - Create new images with the required dimensions
-   - Add text or simple graphics
-   - Export as PNG with transparency
-
-3. **Use a placeholder service:**
-   - Color: https://via.placeholder.com/192x192/4285F4/FFFFFF?text=FC
-   - Outline: https://via.placeholder.com/32x32/000000/FFFFFF?text=FC
-
-## Before Sideloading
-
-1. Update `manifest.json`:
-   - Replace `REPLACE-WITH-YOUR-BOT-APP-ID` with your actual Azure Bot App ID (in 2 places)
-   - Update developer information (name, URLs)
-   - Update `validDomains` if needed
-
-2. Add icon files:
-   - Place `color.png` (192x192) in this directory
-   - Place `outline.png` (32x32) in this directory
-
-3. Create app package:
-   ```bash
-   cd teams-app
-   zip -r teams-freshchat-bot.zip manifest.json color.png outline.png
-   ```
-
-4. Sideload in Teams:
-   - Open Microsoft Teams
-   - Go to Apps → Manage your apps → Upload an app
-   - Select "Upload a custom app"
-   - Choose the `teams-freshchat-bot.zip` file
-   - Add to a team or use in personal chat
-
-## Verification
-
-After uploading, verify:
-- [ ] Bot appears in Teams app list
-- [ ] Can add bot to a team or chat
-- [ ] Bot sends welcome message when added
-- [ ] Messages are forwarded to Freshchat
-- [ ] Agent replies appear in Teams
+1. Microsoft Teams 열기
+2. 왼쪽 사이드바에서 "Apps" 클릭
+3. "Manage your apps" 클릭
+4. "Upload an app" → "Upload a custom app" 클릭
+5. FreshchatBridge.zip 파일 선택
+6. "Add" 클릭

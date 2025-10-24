@@ -1,14 +1,14 @@
 {
-  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "0.1.0",
-  "id": "REPLACE-WITH-YOUR-BOT-APP-ID",
-  "packageName": "com.poc.teamsfreshchat",
+  "version": "1.1.0",
+  "id": "06982189-9e7a-4027-9661-0ec1089f4a45",
+  "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
-    "name": "Your Company Name",
-    "websiteUrl": "https://www.example.com",
-    "privacyUrl": "https://www.example.com/privacy",
-    "termsOfUseUrl": "https://www.example.com/terms"
+    "name": "Wedosoft",
+    "websiteUrl": "https://wedosoft.biz",
+    "privacyUrl": "https://wedosoft.biz/privacy",
+    "termsOfUseUrl": "https://wedosoft.biz/terms"
   },
   "icons": {
     "color": "color.png",
@@ -16,43 +16,31 @@
   },
   "name": {
     "short": "Freshchat Bridge",
-    "full": "Teams to Freshchat Message Bridge (PoC)"
+    "full": "Teams to Freshchat Bridge Bot"
   },
   "description": {
-    "short": "Bridges messages between Teams and Freshchat",
-    "full": "Proof of Concept bot that forwards messages from Microsoft Teams to Freshchat and relays agent responses back to Teams. Text messages only."
+    "short": "Connect Teams conversations to Freshchat support",
+    "full": "This bot bridges Microsoft Teams conversations with Freshchat customer support platform, enabling seamless communication between Teams users and Freshchat agents."
   },
   "accentColor": "#FFFFFF",
   "bots": [
     {
-      "botId": "REPLACE-WITH-YOUR-BOT-APP-ID",
+      "botId": "06982189-9e7a-4027-9661-0ec1089f4a45",
       "scopes": [
         "personal",
         "team",
         "groupchat"
       ],
-      "supportsFiles": false,
-      "isNotificationOnly": false,
-      "commandLists": [
-        {
-          "scopes": [
-            "personal",
-            "team",
-            "groupchat"
-          ],
-          "commands": [
-            {
-              "title": "help",
-              "description": "Get information about this bot"
-            }
-          ]
-        }
-      ]
+      "supportsFiles": true,
+      "isNotificationOnly": false
     }
   ],
   "permissions": [
     "identity",
     "messageTeamMembers"
   ],
-  "validDomains": []
+  "validDomains": [
+    "*.freshchat.com",
+    "*.ngrok-free.dev"
+  ]
 }
