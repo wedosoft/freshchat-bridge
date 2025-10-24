@@ -1,0 +1,58 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "0.1.0",
+  "id": "REPLACE-WITH-YOUR-BOT-APP-ID",
+  "packageName": "com.poc.teamsfreshchat",
+  "developer": {
+    "name": "Your Company Name",
+    "websiteUrl": "https://www.example.com",
+    "privacyUrl": "https://www.example.com/privacy",
+    "termsOfUseUrl": "https://www.example.com/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Freshchat Bridge",
+    "full": "Teams to Freshchat Message Bridge (PoC)"
+  },
+  "description": {
+    "short": "Bridges messages between Teams and Freshchat",
+    "full": "Proof of Concept bot that forwards messages from Microsoft Teams to Freshchat and relays agent responses back to Teams. Text messages only."
+  },
+  "accentColor": "#FFFFFF",
+  "bots": [
+    {
+      "botId": "REPLACE-WITH-YOUR-BOT-APP-ID",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupchat"
+          ],
+          "commands": [
+            {
+              "title": "help",
+              "description": "Get information about this bot"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}
