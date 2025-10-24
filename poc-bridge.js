@@ -14,6 +14,8 @@ const FormData = require('form-data');
 const mime = require('mime-types');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -41,6 +43,45 @@ const conversationMap = new Map();
  * Reverse map: Freshchat conversation ID to Teams conversation ID
  */
 const reverseMap = new Map();
+
+function updateConversationMapping(teamsConversationId, updates) {
+    const existing = conversationMap.get(teamsConversationId) || {};
+    const merged = { ...existing };
+
+    Object.entries(updates).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+            if (key === 'freshchatConversationGuid' || key === 'freshchatConversationNumericId') {
+                merged[key] = String(value);
+            } else {
+                merged[key] = value;
+            }
+        }
+    });
+
+    conversationMap.set(teamsConversationId, merged);
+
+    if (merged.freshchatConversationGuid) {
+        reverseMap.set(merged.freshchatConversationGuid, teamsConversationId);
+    }
+
+    if (merged.freshchatConversationNumericId) {
+        reverseMap.set(String(merged.freshchatConversationNumericId), teamsConversationId);
+    }
+
+    return merged;
+}
+
+function resolveFreshchatConversationId(mapping) {
+    if (!mapping) {
+        return null;
+    }
+
+    return mapping.freshchatConversationNumericId
+        ? String(mapping.freshchatConversationNumericId)
+        : mapping.freshchatConversationGuid
+            ? String(mapping.freshchatConversationGuid)
+            : null;
+}
 
 // ============================================================================
 // Bot Framework Setup
@@ -113,6 +154,9 @@ class FreshchatClient {
             });
 
             console.log(`[Freshchat] Conversation created: ${conversationResponse.data.conversation_id}`);
+            if (conversationResponse.data?.freshchat_conversation_id) {
+                console.log(`[Freshchat] Freshchat conversation ID: ${conversationResponse.data.freshchat_conversation_id}`);
+            }
             return conversationResponse.data;
         } catch (error) {
             console.error('[Freshchat] Error creating conversation:', error.response?.data || error.message);
@@ -189,10 +233,72 @@ class FreshchatClient {
     }
 
     /**
+     * Fetch a specific message from a Freshchat conversation
+     */
+    async getMessageFromConversation(conversationId, messageId, options = {}) {
+        const params = {
+            items_per_page: options.itemsPerPage || 30
+        };
+
+        if (options.fromTime) {
+            params.from_time = options.fromTime;
+        }
+
+        const response = await this.axiosInstance.get(`/conversations/${conversationId}/messages`, {
+            params
+        });
+
+        const messages = response.data?.messages || [];
+        return messages.find((msg) => msg.id === messageId) || null;
+    }
+
+    /**
+     * Retry fetching message details so Freshchat has time to attach download URLs
+     */
+    async getMessageWithRetry(conversationId, messageId, createdTime, maxAttempts = 3) {
+        let attempt = 0;
+        let lastError = null;
+        let fallbackMessage = null;
+
+        while (attempt < maxAttempts) {
+            attempt += 1;
+
+            try {
+                const message = await this.getMessageFromConversation(conversationId, messageId, {
+                    fromTime: attempt === 1 ? createdTime : undefined
+                });
+
+                if (message) {
+                    if (message.message_parts?.some((part) => part.file?.url)) {
+                        return message;
+                    }
+                    fallbackMessage = message;
+                }
+            } catch (error) {
+                lastError = error;
+            }
+
+            if (attempt < maxAttempts) {
+                await delay(700 * attempt);
+            }
+        }
+
+        if (lastError) {
+            console.error(`[Freshchat] Failed to hydrate message ${messageId}:`, lastError.response?.data || lastError.message);
+        }
+
+        return fallbackMessage;
+    }
+
+    /**
      * Send a message to an existing Freshchat conversation
      */
     async sendMessage(conversationId, userId, message, attachments = []) {
         try {
+            if (!conversationId) {
+                throw new Error('Freshchat conversation ID is required to send a message');
+            }
+
             console.log(`[Freshchat] Sending message to conversation: ${conversationId}`);
 
             const messageParts = [];
@@ -235,15 +341,15 @@ class FreshchatClient {
             console.log(`[Freshchat] Message sent successfully, Message ID: ${response.data.id}`);
 
             // 메시지 전송 후 실제 파일 URL을 얻기 위해 메시지 조회
-            if (attachments.length > 0) {
-                try {
-                    const messageResponse = await this.axiosInstance.get(
-                        `/conversations/${conversationId}/messages/${response.data.id}`
-                    );
-                    console.log('[Freshchat] Message details:', JSON.stringify(messageResponse.data, null, 2));
-                } catch (err) {
-                    console.error('[Freshchat] Error fetching message details:', err.response?.data || err.message);
+            if (attachments.length > 0 && /^[0-9]+$/.test(String(conversationId))) {
+                const detailedMessage = await this.getMessageWithRetry(conversationId, response.data.id, response.data.created_time);
+                if (detailedMessage) {
+                    console.log('[Freshchat] Message details:', JSON.stringify(detailedMessage, null, 2));
+                } else {
+                    console.warn('[Freshchat] Unable to fetch message details for attachment logging');
                 }
+            } else if (attachments.length > 0) {
+                console.log('[Freshchat] Skipping attachment hydration until numeric conversation ID is available');
             }
 
             return response.data;
@@ -410,31 +516,56 @@ async function handleTeamsMessage(context) {
                 activity.text || '[File attachment]'
             );
 
-            // Store the mapping
-            mapping = {
-                freshchatConvId: freshchatConv.conversation_id,
+            const freshchatConversationGuid = freshchatConv?.conversation_id
+                ? String(freshchatConv.conversation_id)
+                : null;
+
+            const freshchatConversationNumericId = freshchatConv?.freshchat_conversation_id
+                ? String(freshchatConv.freshchat_conversation_id)
+                : null;
+
+            if (!freshchatConversationGuid && !freshchatConversationNumericId) {
+                throw new Error('Freshchat API response is missing conversation identifiers');
+            }
+
+            mapping = updateConversationMapping(teamsConvId, {
+                freshchatConversationGuid,
+                freshchatConversationNumericId,
                 freshchatUserId: freshchatConv.user_id,
                 conversationReference: TurnContext.getConversationReference(activity)
-            };
+            });
 
-            conversationMap.set(teamsConvId, mapping);
-            reverseMap.set(freshchatConv.conversation_id, teamsConvId);
+            console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${resolveFreshchatConversationId(mapping)})`);
 
-            console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${freshchatConv.conversation_id})`);
+            if (freshchatConversationGuid && !freshchatConversationNumericId) {
+                console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
+            }
 
             // Send attachments if any
             if (freshchatAttachments.length > 0) {
+                const targetConversationId = resolveFreshchatConversationId(mapping);
+
+                if (!targetConversationId) {
+                    throw new Error('Freshchat conversation ID unavailable for attachment transfer');
+                }
+
                 await freshchatClient.sendMessage(
-                    mapping.freshchatConvId,
+                    targetConversationId,
                     mapping.freshchatUserId,
                     null,
                     freshchatAttachments
                 );
             }
         } else {
+            const targetConversationId = resolveFreshchatConversationId(mapping);
+
+            if (!targetConversationId) {
+                throw new Error('Freshchat conversation ID unavailable for message transfer');
+            }
+
             // Existing conversation - send message to Freshchat
             await freshchatClient.sendMessage(
-                mapping.freshchatConvId,
+                targetConversationId,
                 mapping.freshchatUserId,
                 activity.text,
                 freshchatAttachments
@@ -526,12 +657,55 @@ app.post('/freshchat/webhook', async (req, res) => {
         // Handle message_create event
         if (action === 'message_create' && data?.message) {
             const message = data.message;
-            const conversationId = data.conversation_id || message.conversation_id;
+            const freshchatConversationId = message.freshchat_conversation_id
+                ? String(message.freshchat_conversation_id)
+                : data?.freshchat_conversation_id
+                    ? String(data.freshchat_conversation_id)
+                    : null;
+            const conversationGuid = data?.conversation_id || message.conversation_id || null;
             const actorType = message.actor_type;
 
             console.log(`[Freshchat] Processing message_create event`);
             console.log(`[Freshchat] Actor type: ${actorType}`);
-            console.log(`[Freshchat] Conversation ID: ${conversationId}`);
+
+            if (!freshchatConversationId) {
+                console.log('[Freshchat] Payload missing freshchat_conversation_id - cannot route message');
+                return res.sendStatus(200);
+            }
+
+            console.log(`[Freshchat] Conversation ID: ${freshchatConversationId}`);
+            if (conversationGuid && conversationGuid !== freshchatConversationId) {
+                console.log(`[Freshchat] Conversation GUID: ${conversationGuid}`);
+            }
+
+            // Find corresponding Teams conversation
+            let teamsConvId = reverseMap.get(freshchatConversationId);
+            if (!teamsConvId && conversationGuid) {
+                teamsConvId = reverseMap.get(conversationGuid);
+            }
+
+            if (!teamsConvId) {
+                console.log(`[Freshchat] No Teams mapping found for conversation: ${freshchatConversationId}`);
+                if (actorType !== 'agent') {
+                    console.log('[Freshchat] Ignoring non-agent message without mapping');
+                    return res.sendStatus(200);
+                }
+                return res.sendStatus(200);
+            }
+
+            let mapping = conversationMap.get(teamsConvId);
+            if (!mapping) {
+                console.log(`[Freshchat] Mapping data missing for: ${teamsConvId}`);
+                if (actorType !== 'agent') {
+                    return res.sendStatus(200);
+                }
+                return res.sendStatus(200);
+            }
+
+            mapping = updateConversationMapping(teamsConvId, {
+                freshchatConversationNumericId: freshchatConversationId,
+                freshchatConversationGuid: mapping.freshchatConversationGuid || (conversationGuid ? String(conversationGuid) : undefined)
+            });
 
             // Only process agent messages (not user messages)
             if (actorType !== 'agent') {
@@ -539,44 +713,80 @@ app.post('/freshchat/webhook', async (req, res) => {
                 return res.sendStatus(200);
             }
 
-            // Find corresponding Teams conversation
-            const teamsConvId = reverseMap.get(conversationId);
-            if (!teamsConvId) {
-                console.log(`[Freshchat] No Teams mapping found for conversation: ${conversationId}`);
-                return res.sendStatus(200);
-            }
-
-            const mapping = conversationMap.get(teamsConvId);
-            if (!mapping) {
-                console.log(`[Freshchat] Mapping data missing for: ${teamsConvId}`);
-                return res.sendStatus(200);
-            }
-
             // Extract message text and files
             let messageText = '';
-            const fileAttachments = [];
+            const attachmentParts = [];
 
             if (message.message_parts && message.message_parts.length > 0) {
                 for (const part of message.message_parts) {
-                    // Extract text
-                    if (part.text && part.text.content) {
+                    if (part.text?.content) {
                         messageText = part.text.content;
                     }
 
-                    // Extract file attachments
                     if (part.file) {
-                        fileAttachments.push({
+                        attachmentParts.push({
+                            name: part.file.name,
                             contentType: part.file.content_type || 'application/octet-stream',
-                            contentUrl: part.file.url,
-                            name: part.file.name
+                            url: part.file.url,
+                            fileHash: part.file.file_hash
                         });
                     }
                 }
             }
 
+            // Hydrate missing file URLs if webhook payload omitted them
+            if (attachmentParts.some((attachment) => !attachment.url)) {
+                console.log('[Freshchat] Attachment URL missing, fetching message details...');
+                const detailedMessage = await freshchatClient.getMessageWithRetry(
+                    freshchatConversationId,
+                    message.id,
+                    message.created_time
+                );
+
+                if (detailedMessage?.message_parts) {
+                    const detailIndex = new Map();
+                    for (const part of detailedMessage.message_parts) {
+                        if (part.file) {
+                            const key = part.file.file_hash || part.file.name;
+                            detailIndex.set(key, part.file);
+                        }
+                    }
+
+                    for (const attachment of attachmentParts) {
+                        const match = detailIndex.get(attachment.fileHash) || detailIndex.get(attachment.name);
+                        if (match) {
+                            attachment.url = match.url || attachment.url;
+                            attachment.contentType = match.content_type || attachment.contentType;
+                        }
+                    }
+                }
+            }
+
+            const missingUrls = attachmentParts
+                .filter((attachment) => !attachment.url)
+                .map((attachment) => attachment.name)
+                .filter(Boolean);
+
+            const fileAttachments = attachmentParts
+                .filter((attachment) => !!attachment.url)
+                .map((attachment) => ({
+                    contentType: attachment.contentType,
+                    contentUrl: attachment.url,
+                    name: attachment.name
+                }));
+
             if (!messageText && fileAttachments.length === 0) {
                 console.log('[Freshchat] No content found in message');
                 return res.sendStatus(200);
+            }
+
+            if (missingUrls.length > 0) {
+                const warningLine = `⚠️ 첨부파일을 가져오지 못했습니다: ${missingUrls.join(', ')}. Freshchat에서 직접 확인해주세요.`;
+                if (messageText) {
+                    messageText = `${messageText}\n\n${warningLine}`;
+                } else {
+                    messageText = warningLine;
+                }
             }
 
             console.log(`[Freshchat → Teams] Forwarding message: "${messageText || '[File only]'}"`);
@@ -613,7 +823,8 @@ app.get('/debug/mappings', (req, res) => {
     conversationMap.forEach((value, key) => {
         mappings.push({
             teamsConversationId: key,
-            freshchatConversationId: value.freshchatConvId,
+            freshchatConversationId: value.freshchatConversationNumericId,
+            freshchatConversationGuid: value.freshchatConversationGuid,
             freshchatUserId: value.freshchatUserId
         });
     });
