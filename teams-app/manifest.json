@@ -1,0 +1,46 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.1.0",
+  "id": "06982189-9e7a-4027-9661-0ec1089f4a45",
+  "packageName": "com.wedosoft.freshchatbridge",
+  "developer": {
+    "name": "Wedosoft",
+    "websiteUrl": "https://wedosoft.biz",
+    "privacyUrl": "https://wedosoft.biz/privacy",
+    "termsOfUseUrl": "https://wedosoft.biz/terms"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "Freshchat Bridge",
+    "full": "Teams to Freshchat Bridge Bot"
+  },
+  "description": {
+    "short": "Connect Teams conversations to Freshchat support",
+    "full": "This bot bridges Microsoft Teams conversations with Freshchat customer support platform, enabling seamless communication between Teams users and Freshchat agents."
+  },
+  "accentColor": "#FFFFFF",
+  "bots": [
+    {
+      "botId": "06982189-9e7a-4027-9661-0ec1089f4a45",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "*.freshchat.com",
+    "*.ngrok-free.dev"
+  ]
+}
