@@ -933,151 +933,73 @@ app.post('/freshchat/webhook', async (req, res) => {
                 .map((attachment) => attachment.name)
                 .filter(Boolean);
 
-            const downloadableAttachments = attachmentParts.filter((attachment) => !!attachment.url);
-            const teamsAttachmentPayloads = [];
+            const attachmentLinks = [];
             const downloadFailures = [];
 
-            for (const attachment of downloadableAttachments) {
-                try {
-                    const fileData = await freshchatClient.downloadFile(attachment.url);
-                    const resolvedContentType = attachment.contentType
-                        || fileData.contentType
-                        || mime.lookup(attachment.name || fileData.filename || '')
-                        || 'application/octet-stream';
-
-                    teamsAttachmentPayloads.push({
-                        buffer: fileData.buffer,
-                        contentType: resolvedContentType,
-                        name: attachment.name || fileData.filename || 'freshchat-file'
-                    });
-                } catch (downloadError) {
-                    const referenceName = attachment.name || attachment.url;
-                    downloadFailures.push(referenceName);
-                    console.error(`[Freshchat] Failed to prepare attachment for Teams (${referenceName}):`, downloadError.message);
-                }
-            }
-
-            if (missingUrls.length > 0) {
-                const warningLine = `⚠️ 첨부파일을 가져오지 못했습니다: ${missingUrls.join(', ')}. Freshchat에서 직접 확인해주세요.`;
-                if (messageText) {
-                    messageText = `${messageText}\n\n${warningLine}`;
+            if (attachmentParts.length > 0) {
+                if (!NGROK_URL) {
+                    console.error('[Teams] NGROK_URL is not set. Cannot process attachments from Freshchat.');
+                    messageText += `\n\n⚠️ 첨부파일을 처리할 수 없습니다: 서버 구성 오류.`;
                 } else {
-                    messageText = warningLine;
+                    for (const attachment of attachmentParts) {
+                        try {
+                            if (!attachment.url) {
+                                downloadFailures.push(attachment.name || '알 수 없는 파일');
+                                continue;
+                            }
+
+                            const fileData = await freshchatClient.downloadFile(attachment.url);
+                            const filename = `${Date.now()}-${(attachment.name || fileData.filename || 'freshchat-file').replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
+                            const filepath = path.join(UPLOADS_DIR, filename);
+                            fs.writeFileSync(filepath, fileData.buffer);
+
+                            const publicUrl = `${NGROK_URL.replace(/\/$/, '')}/files/${filename}`;
+
+                            const isImage = (fileData.contentType || attachment.contentType || '').startsWith('image/');
+                            const displayName = attachment.name || fileData.filename || '파일';
+
+                            if (isImage) {
+                                // Embed images using Markdown
+                                attachmentLinks.push(`![${displayName}](${publicUrl})`);
+                            } else {
+                                // Provide a download link for other files
+                                attachmentLinks.push(`[${displayName} 다운로드](${publicUrl})`);
+                            }
+                        } catch (downloadError) {
+                            downloadFailures.push(attachment.name || '알 수 없는 파일');
+                            console.error(`[Freshchat] Failed to process attachment for Teams (${attachment.name}):`, downloadError.message);
+                        }
+                    }
                 }
             }
 
             if (downloadFailures.length > 0) {
-                const downloadWarning = `⚠️ 첨부파일 다운로드 실패: ${downloadFailures.join(', ')}. Freshchat에서 직접 확인해주세요.`;
-                messageText = messageText
-                    ? `${messageText}\n\n${downloadWarning}`
-                    : downloadWarning;
+                const downloadWarning = `⚠️ 다음 첨부파일을 처리하지 못했습니다: ${downloadFailures.join(', ')}. Freshchat에서 직접 확인해주세요.`;
+                messageText = messageText ? `${messageText}\n\n${downloadWarning}` : downloadWarning;
             }
 
-            if (!messageText && teamsAttachmentPayloads.length === 0 && downloadFailures.length === 0 && missingUrls.length === 0) {
+            if (!messageText && attachmentLinks.length === 0) {
                 console.log('[Freshchat] No content found in message');
                 return res.sendStatus(200);
             }
-
-            console.log(`[Freshchat → Teams] Forwarding message: "${messageText || '[File only]'}"`);
-            console.log(`[Freshchat → Teams] Attachments prepared for Teams: ${teamsAttachmentPayloads.length}`);
 
             // Send message to Teams
             await adapter.continueConversation(
                 mapping.conversationReference,
                 async (turnContext) => {
-                    const actorLabelMap = {
-                        agent: 'Agent Reply',
-                        system: 'System Message',
-                        bot: 'Bot Message'
-                    };
+                    const actorLabelMap = { agent: 'Agent Reply', system: 'System Message', bot: 'Bot Message' };
                     const actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
-                    const textPrefix = `**${actorLabel}:**`;
+                    let composedText = `**${actorLabel}:**`;
 
-                    const uploadedAttachments = [];
-                    const uploadFailures = [];
-
-                    if (teamsAttachmentPayloads.length > 0) {
-                        const serviceUrl = (turnContext.activity.serviceUrl || mapping.conversationReference.serviceUrl || '').replace(/\/$/, '');
-                        const conversationId = turnContext.activity.conversation?.id || mapping.conversationReference.conversation?.id;
-
-                        if (!serviceUrl || !conversationId) {
-                            console.error('[Teams] Missing service URL or conversation ID for attachment upload');
-                            uploadFailures.push(...teamsAttachmentPayloads.map((attachment) => attachment.name));
-                        } else {
-                            const connectorClient = turnContext.adapter.createConnectorClient(serviceUrl);
-
-                            for (const attachment of teamsAttachmentPayloads) {
-                                try {
-                                    // The Bot Framework SDK expects a Buffer directly for 'originalBase64' despite the name
-                                    const attachmentResponse = await connectorClient.conversations.uploadAttachment(conversationId, {
-                                        name: attachment.name,
-                                        originalBase64: attachment.buffer,
-                                        type: attachment.contentType
-                                    });
-
-                                    const attachmentId = attachmentResponse?.id;
-                                    if (!attachmentId) {
-                                        throw new Error('Attachment upload response missing ID');
-                                    }
-
-                                    const attachmentUrl = `${serviceUrl}/v3/attachments/${attachmentId}/views/original`;
-                                    uploadedAttachments.push({
-                                        contentType: attachment.contentType,
-                                        contentUrl: attachmentUrl,
-                                        name: attachment.name
-                                    });
-                                } catch (uploadError) {
-                                    uploadFailures.push(attachment.name);
-                                    console.error(`[Teams] Failed to upload attachment to Teams (${attachment.name}):`, uploadError.message);
-                                }
-                            }
-                        }
-                    }
-
-                    let composedText = textPrefix;
                     if (messageText) {
-                        composedText = `${textPrefix}\n${messageText}`;
+                        composedText += `\n${messageText}`;
                     }
 
-                    const finalAttachments = [];
-                    const imageMarkdownLines = [];
-
-                    for (const attachment of uploadedAttachments) {
-                        const isImage = typeof attachment.contentType === 'string' && attachment.contentType.startsWith('image/');
-                        if (isImage) {
-                            // For images, generate Markdown to embed them in the message text
-                            const altText = attachment.name || 'image';
-                            imageMarkdownLines.push(`![${altText}](${attachment.contentUrl})`);
-                        } else {
-                            // For other files, create a downloadable card
-                            finalAttachments.push(CardFactory.attachment(attachment));
-                        }
+                    if (attachmentLinks.length > 0) {
+                        composedText += `\n\n${attachmentLinks.join('\n')}`;
                     }
 
-                    if (imageMarkdownLines.length > 0) {
-                        if (messageText) {
-                            composedText = `${composedText}\n\n${imageMarkdownLines.join('\n')}`;
-                        } else {
-                            composedText = `${textPrefix}\n${imageMarkdownLines.join('\n')}`;
-                        }
-                    } else if (!messageText && teamsAttachmentPayloads.length > 0) {
-                        composedText = `${textPrefix} (첨부파일 전달)`;
-                    }
-
-                    const messageActivity = {
-                        type: 'message',
-                        text: composedText,
-                        attachments: finalAttachments.length > 0 ? finalAttachments : undefined
-                    };
-
-                    if (uploadFailures.length > 0) {
-                        const uploadWarning = `⚠️ 첨부파일 업로드 실패: ${uploadFailures.join(', ')}. Freshchat에서 직접 확인해주세요.`;
-                        messageActivity.text = messageActivity.text
-                            ? `${messageActivity.text}\n\n${uploadWarning}`
-                            : uploadWarning;
-                    }
-
-                    await turnContext.sendActivity(messageActivity);
+                    await turnContext.sendActivity(composedText);
                 }
             );
 
