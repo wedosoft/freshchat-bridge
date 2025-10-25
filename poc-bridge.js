@@ -1008,10 +1008,10 @@ app.post('/freshchat/webhook', async (req, res) => {
 
                             for (const attachment of teamsAttachmentPayloads) {
                                 try {
-                                    const base64Payload = attachment.buffer.toString('base64');
+                                    // The Bot Framework SDK expects a Buffer directly for 'originalBase64' despite the name
                                     const attachmentResponse = await connectorClient.conversations.uploadAttachment(conversationId, {
                                         name: attachment.name,
-                                        originalBase64: base64Payload,
+                                        originalBase64: attachment.buffer,
                                         type: attachment.contentType
                                     });
 
