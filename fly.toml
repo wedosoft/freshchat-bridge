@@ -17,6 +17,3 @@ primary_region = "nrt"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 256
-
-[env]
-TZ = "Asia/Seoul"

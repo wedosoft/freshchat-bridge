@@ -313,6 +313,18 @@ class FreshchatClient {
             }
 
             console.log(`[Freshchat] Sending message to conversation: ${conversationId}`);
+            console.log('[Freshchat] Outgoing message payload:', {
+                conversationId,
+                actorId: userId,
+                hasText: Boolean(message),
+                attachmentsCount: attachments.length,
+                attachmentsSummary: attachments.map((part) => ({
+                    keys: Object.keys(part),
+                    contentType: part.content_type,
+                    hash: part.file_hash,
+                    url: part.url
+                }))
+            });
 
             const messageParts = [];
 
@@ -377,6 +389,14 @@ class FreshchatClient {
             return response.data;
         } catch (error) {
             console.error('[Freshchat] Error sending message:', error.response?.data || error.message);
+            if (error.response) {
+                console.error('[Freshchat] Error response details:', {
+                    status: error.response.status,
+                    statusText: error.response.statusText,
+                    headers: error.response.headers,
+                    data: error.response.data
+                });
+            }
             throw error;
         }
     }
@@ -598,13 +618,21 @@ async function handleTeamsMessage(context) {
                             attachment.contentType
                         );
 
+                        console.log('[Teams → Freshchat] File upload response:', {
+                            name: uploadedFile?.file_name,
+                            size: uploadedFile?.file_size,
+                            contentType: uploadedFile?.file_content_type,
+                            hash: uploadedFile?.file_hash,
+                            raw: uploadedFile
+                        });
+
                         freshchatAttachments.push({
                             name: uploadedFile.file_name || attachment.name,
                             file_size_in_bytes: uploadedFile.file_size || fileBuffer.length,
                             content_type: uploadedFile.file_content_type || attachment.contentType,
                             file_hash: uploadedFile.file_hash
                         });
-                        console.log(`[Teams → Freshchat] File uploaded: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
+                        console.log(`[Teams → Freshchat] File prepared for send: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
                     }
                 } catch (error) {
                     console.error(`[Teams] Failed to process attachment ${attachment.name}:`, error.message);
