@@ -7,7 +7,6 @@
 
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
 const NodeRSA = require('node-rsa');
@@ -29,7 +28,7 @@ const BOT_APP_ID = process.env.BOT_APP_ID;
 const BOT_APP_PASSWORD = process.env.BOT_APP_PASSWORD;
 const BOT_TENANT_ID = process.env.BOT_TENANT_ID;
 const FRESHCHAT_API_KEY = process.env.FRESHCHAT_API_KEY;
-const FRESHCHAT_API_URL = process.env.FRESHCHAT_API_URL || 'https://api.freshchat.com/v2';
+const FRESHCHAT_API_URL = process.env.FRESHCHAT_API_URL;
 const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
 const PUBLIC_URL = process.env.PUBLIC_URL;
@@ -693,9 +692,21 @@ async function handleTeamsMessage(context) {
 // ============================================================================
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 app.use('/files', express.static(UPLOADS_DIR));
+
+// Allow Azure portal and Bot Framework service to access bot endpoints during testing
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+
+    return next();
+});
 
 /**
  * Health check endpoint
