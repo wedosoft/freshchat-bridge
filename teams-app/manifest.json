@@ -5,17 +5,17 @@
   "id": "06982189-9e7a-4027-9661-0ec1089f4a45",
   "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
-    "name": "Wedosoft",
-    "websiteUrl": "https://wedosoft.biz",
-    "privacyUrl": "https://wedosoft.biz/privacy",
-    "termsOfUseUrl": "https://wedosoft.biz/terms"
+    "name": "We Do Soft",
+    "websiteUrl": "https://wedosoft.net",
+    "privacyUrl": "https://wedosoft.net/privacy",
+    "termsOfUseUrl": "https://wedosoft.net/terms"
   },
   "icons": {
     "color": "color.png",
     "outline": "outline.png"
   },
   "name": {
-    "short": "Freshchat Bridge",
+    "short": "Freshchat Bridge Bot",
     "full": "Teams to Freshchat Bridge Bot"
   },
   "description": {
@@ -41,6 +41,6 @@
   ],
   "validDomains": [
     "*.freshchat.com",
-    "*.ngrok-free.dev"
+    "teams-freshchat.fly.dev"
   ]
 }
