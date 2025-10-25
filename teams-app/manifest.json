@@ -41,6 +41,6 @@
   ],
   "validDomains": [
     "*.freshchat.com",
-    "teams-freshchat.fly.dev"
+    "freshchat-bridge.fly.dev"
   ]
 }
