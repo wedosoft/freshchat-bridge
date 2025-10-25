@@ -31,7 +31,7 @@ const FRESHCHAT_API_KEY = process.env.FRESHCHAT_API_KEY;
 const FRESHCHAT_API_URL = process.env.FRESHCHAT_API_URL || 'https://api.freshchat.com/v2';
 const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
-const NGROK_URL = process.env.NGROK_URL;
+const PUBLIC_URL = process.env.PUBLIC_URL;
 
 // ============================================================================
 // File Storage Setup
@@ -576,14 +576,14 @@ async function handleTeamsMessage(context) {
 
                     if (isImage) {
                         // For images, save locally and create a public URL
-                        if (!NGROK_URL) {
-                            throw new Error('NGROK_URL environment variable is not set. Cannot serve images.');
+                        if (!PUBLIC_URL) {
+                            throw new Error('PUBLIC_URL environment variable is not set. Cannot serve images.');
                         }
                         const filename = `${Date.now()}-${attachment.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
                         const filepath = path.join(UPLOADS_DIR, filename);
                         fs.writeFileSync(filepath, fileBuffer);
 
-                        const publicUrl = `${NGROK_URL.replace(/\/$/, '')}/files/${filename}`;
+                        const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${filename}`;
                         freshchatAttachments.push({
                             url: publicUrl,
                             content_type: attachment.contentType
@@ -937,8 +937,8 @@ app.post('/freshchat/webhook', async (req, res) => {
             const downloadFailures = [];
 
             if (attachmentParts.length > 0) {
-                if (!NGROK_URL) {
-                    console.error('[Teams] NGROK_URL is not set. Cannot process attachments from Freshchat.');
+                if (!PUBLIC_URL) {
+                    console.error('[Teams] PUBLIC_URL is not set. Cannot process attachments from Freshchat.');
                     messageText += `\n\n⚠️ 첨부파일을 처리할 수 없습니다: 서버 구성 오류.`;
                 } else {
                     for (const attachment of attachmentParts) {
@@ -953,7 +953,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                             const filepath = path.join(UPLOADS_DIR, filename);
                             fs.writeFileSync(filepath, fileData.buffer);
 
-                            const publicUrl = `${NGROK_URL.replace(/\/$/, '')}/files/${filename}`;
+                            const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${filename}`;
 
                             const isImage = (fileData.contentType || attachment.contentType || '').startsWith('image/');
                             const displayName = attachment.name || fileData.filename || '파일';
@@ -1057,9 +1057,8 @@ app.listen(PORT, () => {
     console.log(`📍 Health check: http://localhost:${PORT}/`);
     console.log(`📍 Debug mappings: http://localhost:${PORT}/debug/mappings`);
     console.log('\n⚠️  Remember to:');
-    console.log('   1. Start ngrok: ngrok http 3978');
-    console.log('   2. Update Azure Bot messaging endpoint with ngrok URL');
-    console.log('   3. Configure Freshchat webhook with ngrok URL');
+    console.log('   1. Update Azure Bot messaging endpoint with your Fly.io URL');
+    console.log('   2. Configure Freshchat webhook with your Fly.io URL');
     console.log('\n═══════════════════════════════════════════════════════════\n');
 });
 
