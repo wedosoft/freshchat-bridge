@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const NodeRSA = require('node-rsa');
 const FormData = require('form-data');
 const mime = require('mime-types');
+const { URL } = require('url');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -358,6 +359,81 @@ class FreshchatClient {
             throw error;
         }
     }
+
+    /**
+     * Download a file from Freshchat using an authenticated request
+     */
+    async downloadFile(fileUrl) {
+        if (!fileUrl) {
+            throw new Error('Freshchat file URL is required for download');
+        }
+
+        try {
+            const maskedUrl = (() => {
+                try {
+                    const parsed = new URL(fileUrl);
+                    parsed.search = '';
+                    return parsed.toString();
+                } catch (urlError) {
+                    return fileUrl;
+                }
+            })();
+
+            console.log(`[Freshchat] Download request (auth): ${maskedUrl}`);
+            const primaryResponse = await axios.get(fileUrl, {
+                responseType: 'arraybuffer',
+                headers: {
+                    Authorization: `Bearer ${this.apiKey}`
+                },
+                validateStatus: () => true
+            });
+
+            let response = primaryResponse;
+
+            console.log(`[Freshchat] Download response (auth): status=${response.status}`);
+
+            if (response.status >= 400) {
+                console.warn(`[Freshchat] Authenticated download returned status ${response.status}. Retrying without Authorization header.`);
+                console.log(`[Freshchat] Download request (anon): ${maskedUrl}`);
+                response = await axios.get(fileUrl, {
+                    responseType: 'arraybuffer',
+                    validateStatus: () => true
+                });
+                console.log(`[Freshchat] Download response (anon): status=${response.status}`);
+            }
+
+            if (response.status >= 400) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const contentDisposition = response.headers['content-disposition'] || '';
+            let filename = null;
+
+            const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+            if (utf8Match && utf8Match[1]) {
+                filename = decodeURIComponent(utf8Match[1]);
+            } else {
+                const asciiMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+                if (asciiMatch && asciiMatch[1]) {
+                    filename = asciiMatch[1];
+                } else {
+                    console.warn('[Freshchat] Unable to fetch hydrated message details for attachments');
+                }
+            }
+
+            return {
+                buffer: Buffer.from(response.data),
+                contentType: response.headers['content-type'],
+                contentLength: Number(response.headers['content-length']) || undefined,
+                filename
+            };
+        } catch (error) {
+            const status = error.response?.status;
+            const statusText = error.response?.statusText || error.message;
+            console.error('[Freshchat] Error downloading file:', status, statusText);
+            throw error;
+        }
+    }
 }
 
 const freshchatClient = new FreshchatClient(FRESHCHAT_API_KEY, FRESHCHAT_API_URL, FRESHCHAT_INBOX_ID);
@@ -396,12 +472,12 @@ function verifyFreshchatSignature(payload, signature) {
             key.importKey(publicKey, 'pkcs1-public-pem');
             console.log('[Security] Successfully imported key as pkcs1-public-pem');
         } catch (e1) {
-            console.log('[Security] Failed pkcs1-public-pem, trying pkcs8-public-pem');
+            console.log('[Security] pkcs1-public-pem import failed (expected for PKCS#8 keys). Retrying with pkcs8-public-pem.');
             try {
                 key.importKey(publicKey, 'pkcs8-public-pem');
                 console.log('[Security] Successfully imported key as pkcs8-public-pem');
             } catch (e2) {
-                console.log('[Security] Failed pkcs8-public-pem, trying public format');
+                console.log('[Security] pkcs8-public-pem import failed, falling back to generic public format.');
                 key.importKey(publicKey, 'public');
                 console.log('[Security] Successfully imported key as public');
             }
@@ -663,7 +739,8 @@ app.post('/freshchat/webhook', async (req, res) => {
                     ? String(data.freshchat_conversation_id)
                     : null;
             const conversationGuid = data?.conversation_id || message.conversation_id || null;
-            const actorType = message.actor_type;
+            const actorTypeRaw = message.actor_type;
+            const actorType = actorTypeRaw ? String(actorTypeRaw).toLowerCase() : 'unknown';
 
             console.log(`[Freshchat] Processing message_create event`);
             console.log(`[Freshchat] Actor type: ${actorType}`);
@@ -686,7 +763,7 @@ app.post('/freshchat/webhook', async (req, res) => {
 
             if (!teamsConvId) {
                 console.log(`[Freshchat] No Teams mapping found for conversation: ${freshchatConversationId}`);
-                if (actorType !== 'agent') {
+                if (actorType !== 'agent' && actorType !== 'system' && actorType !== 'bot') {
                     console.log('[Freshchat] Ignoring non-agent message without mapping');
                     return res.sendStatus(200);
                 }
@@ -696,7 +773,7 @@ app.post('/freshchat/webhook', async (req, res) => {
             let mapping = conversationMap.get(teamsConvId);
             if (!mapping) {
                 console.log(`[Freshchat] Mapping data missing for: ${teamsConvId}`);
-                if (actorType !== 'agent') {
+                if (actorType !== 'agent' && actorType !== 'system' && actorType !== 'bot') {
                     return res.sendStatus(200);
                 }
                 return res.sendStatus(200);
@@ -708,8 +785,9 @@ app.post('/freshchat/webhook', async (req, res) => {
             });
 
             // Only process agent messages (not user messages)
-            if (actorType !== 'agent') {
-                console.log('[Freshchat] Ignoring non-agent message');
+            const allowedActorTypes = new Set(['agent', 'system', 'bot']);
+            if (!allowedActorTypes.has(actorType)) {
+                console.log(`[Freshchat] Ignoring message from actor type: ${actorType}`);
                 return res.sendStatus(200);
             }
 
@@ -720,7 +798,9 @@ app.post('/freshchat/webhook', async (req, res) => {
             if (message.message_parts && message.message_parts.length > 0) {
                 for (const part of message.message_parts) {
                     if (part.text?.content) {
-                        messageText = part.text.content;
+                        messageText = messageText
+                            ? `${messageText}\n${part.text.content}`
+                            : part.text.content;
                     }
 
                     if (part.file) {
@@ -731,12 +811,44 @@ app.post('/freshchat/webhook', async (req, res) => {
                             fileHash: part.file.file_hash
                         });
                     }
+
+                    if (part.image?.url) {
+                        const derivedName = (() => {
+                            if (part.image.name) {
+                                return part.image.name;
+                            }
+                            try {
+                                const parsedUrl = new URL(part.image.url);
+                                const pathname = parsedUrl.pathname || '';
+                                const candidate = pathname.split('/').pop();
+                                return candidate || 'freshchat-image';
+                            } catch (urlError) {
+                                return 'freshchat-image';
+                            }
+                        })();
+
+                        attachmentParts.push({
+                            name: derivedName,
+                            contentType: part.image.content_type || part.image.contentType || 'image/png',
+                            url: part.image.url,
+                            fileHash: part.image.file_hash
+                        });
+                    }
+
+                    if (part.video?.url) {
+                        attachmentParts.push({
+                            name: part.video.name || 'freshchat-video',
+                            contentType: part.video.content_type || 'video/mp4',
+                            url: part.video.url,
+                            fileHash: part.video.file_hash
+                        });
+                    }
                 }
             }
 
-            // Hydrate missing file URLs if webhook payload omitted them
-            if (attachmentParts.some((attachment) => !attachment.url)) {
-                console.log('[Freshchat] Attachment URL missing, fetching message details...');
+            // Always hydrate attachment details to obtain signed URLs
+            if (attachmentParts.length > 0) {
+                console.log('[Freshchat] Fetching message details for attachment hydration...');
                 const detailedMessage = await freshchatClient.getMessageWithRetry(
                     freshchatConversationId,
                     message.id,
@@ -748,15 +860,40 @@ app.post('/freshchat/webhook', async (req, res) => {
                     for (const part of detailedMessage.message_parts) {
                         if (part.file) {
                             const key = part.file.file_hash || part.file.name;
-                            detailIndex.set(key, part.file);
+                            detailIndex.set(key, {
+                                url: part.file.download_url || part.file.url,
+                                contentType: part.file.content_type,
+                                name: part.file.name
+                            });
+                        }
+
+                        if (part.image) {
+                            const key = part.image.file_hash || part.image.name || part.image.url;
+                            detailIndex.set(key, {
+                                url: part.image.download_url || part.image.url,
+                                contentType: part.image.content_type,
+                                name: part.image.name
+                            });
+                        }
+
+                        if (part.video) {
+                            const key = part.video.file_hash || part.video.name || part.video.url;
+                            detailIndex.set(key, {
+                                url: part.video.download_url || part.video.url,
+                                contentType: part.video.content_type,
+                                name: part.video.name
+                            });
                         }
                     }
 
                     for (const attachment of attachmentParts) {
-                        const match = detailIndex.get(attachment.fileHash) || detailIndex.get(attachment.name);
+                        const match = detailIndex.get(attachment.fileHash)
+                            || detailIndex.get(attachment.name)
+                            || detailIndex.get(attachment.url);
                         if (match) {
                             attachment.url = match.url || attachment.url;
-                            attachment.contentType = match.content_type || attachment.contentType;
+                            attachment.contentType = match.contentType || attachment.contentType;
+                            attachment.name = attachment.name || match.name;
                         }
                     }
                 }
@@ -767,17 +904,28 @@ app.post('/freshchat/webhook', async (req, res) => {
                 .map((attachment) => attachment.name)
                 .filter(Boolean);
 
-            const fileAttachments = attachmentParts
-                .filter((attachment) => !!attachment.url)
-                .map((attachment) => ({
-                    contentType: attachment.contentType,
-                    contentUrl: attachment.url,
-                    name: attachment.name
-                }));
+            const downloadableAttachments = attachmentParts.filter((attachment) => !!attachment.url);
+            const teamsAttachmentPayloads = [];
+            const downloadFailures = [];
 
-            if (!messageText && fileAttachments.length === 0) {
-                console.log('[Freshchat] No content found in message');
-                return res.sendStatus(200);
+            for (const attachment of downloadableAttachments) {
+                try {
+                    const fileData = await freshchatClient.downloadFile(attachment.url);
+                    const resolvedContentType = attachment.contentType
+                        || fileData.contentType
+                        || mime.lookup(attachment.name || fileData.filename || '')
+                        || 'application/octet-stream';
+
+                    teamsAttachmentPayloads.push({
+                        buffer: fileData.buffer,
+                        contentType: resolvedContentType,
+                        name: attachment.name || fileData.filename || 'freshchat-file'
+                    });
+                } catch (downloadError) {
+                    const referenceName = attachment.name || attachment.url;
+                    downloadFailures.push(referenceName);
+                    console.error(`[Freshchat] Failed to prepare attachment for Teams (${referenceName}):`, downloadError.message);
+                }
             }
 
             if (missingUrls.length > 0) {
@@ -789,18 +937,109 @@ app.post('/freshchat/webhook', async (req, res) => {
                 }
             }
 
+            if (downloadFailures.length > 0) {
+                const downloadWarning = `⚠️ 첨부파일 다운로드 실패: ${downloadFailures.join(', ')}. Freshchat에서 직접 확인해주세요.`;
+                messageText = messageText
+                    ? `${messageText}\n\n${downloadWarning}`
+                    : downloadWarning;
+            }
+
+            if (!messageText && teamsAttachmentPayloads.length === 0 && downloadFailures.length === 0 && missingUrls.length === 0) {
+                console.log('[Freshchat] No content found in message');
+                return res.sendStatus(200);
+            }
+
             console.log(`[Freshchat → Teams] Forwarding message: "${messageText || '[File only]'}"`);
-            console.log(`[Freshchat → Teams] Attachments: ${fileAttachments.length}`);
+            console.log(`[Freshchat → Teams] Attachments prepared for Teams: ${teamsAttachmentPayloads.length}`);
 
             // Send message to Teams
             await adapter.continueConversation(
                 mapping.conversationReference,
                 async (turnContext) => {
+                    const actorLabelMap = {
+                        agent: 'Agent Reply',
+                        system: 'System Message',
+                        bot: 'Bot Message'
+                    };
+                    const actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
+                    const textPrefix = `**${actorLabel}:**`;
+
+                    const uploadedAttachments = [];
+                    const uploadFailures = [];
+
+                    if (teamsAttachmentPayloads.length > 0) {
+                        const serviceUrl = (turnContext.activity.serviceUrl || mapping.conversationReference.serviceUrl || '').replace(/\/$/, '');
+                        const conversationId = turnContext.activity.conversation?.id || mapping.conversationReference.conversation?.id;
+
+                        if (!serviceUrl || !conversationId) {
+                            console.error('[Teams] Missing service URL or conversation ID for attachment upload');
+                            uploadFailures.push(...teamsAttachmentPayloads.map((attachment) => attachment.name));
+                        } else {
+                            const connectorClient = turnContext.adapter.createConnectorClient(serviceUrl);
+
+                            for (const attachment of teamsAttachmentPayloads) {
+                                try {
+                                    const base64Payload = attachment.buffer.toString('base64');
+                                    const attachmentResponse = await connectorClient.conversations.uploadAttachment(conversationId, {
+                                        name: attachment.name,
+                                        originalBase64: base64Payload,
+                                        type: attachment.contentType
+                                    });
+
+                                    const attachmentId = attachmentResponse?.id;
+                                    if (!attachmentId) {
+                                        throw new Error('Attachment upload response missing ID');
+                                    }
+
+                                    const attachmentUrl = `${serviceUrl}/v3/attachments/${attachmentId}/views/original`;
+                                    uploadedAttachments.push({
+                                        contentType: attachment.contentType,
+                                        contentUrl: attachmentUrl,
+                                        name: attachment.name
+                                    });
+                                } catch (uploadError) {
+                                    uploadFailures.push(attachment.name);
+                                    console.error(`[Teams] Failed to upload attachment to Teams (${attachment.name}):`, uploadError.message);
+                                }
+                            }
+                        }
+                    }
+
+                    let composedText = textPrefix;
+                    if (messageText) {
+                        composedText = `${textPrefix}\n${messageText}`;
+                    }
+
                     const messageActivity = {
                         type: 'message',
-                        text: messageText ? `**Agent Reply:**\n${messageText}` : '**Agent sent a file:**',
-                        attachments: fileAttachments.length > 0 ? fileAttachments : undefined
+                        text: composedText,
+                        attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined
                     };
+
+                    const imageMarkdowns = uploadedAttachments
+                        .filter((attachment) => typeof attachment.contentType === 'string' && attachment.contentType.startsWith('image/'))
+                        .map((attachment) => {
+                            const altText = attachment.name || 'image';
+                            return `![${altText}](${attachment.contentUrl})`;
+                        });
+
+                    if (imageMarkdowns.length > 0) {
+                        if (messageText) {
+                            messageActivity.text = `${messageActivity.text}\n\n${imageMarkdowns.join('\n')}`;
+                        } else {
+                            messageActivity.text = `${textPrefix}\n${imageMarkdowns.join('\n')}`;
+                        }
+                    } else if (!messageText && teamsAttachmentPayloads.length > 0) {
+                        messageActivity.text = `${textPrefix} (첨부파일 전달)`;
+                    }
+
+                    if (uploadFailures.length > 0) {
+                        const uploadWarning = `⚠️ 첨부파일 업로드 실패: ${uploadFailures.join(', ')}. Freshchat에서 직접 확인해주세요.`;
+                        messageActivity.text = messageActivity.text
+                            ? `${messageActivity.text}\n\n${uploadWarning}`
+                            : uploadWarning;
+                    }
+
                     await turnContext.sendActivity(messageActivity);
                 }
             );

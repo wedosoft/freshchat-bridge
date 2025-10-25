@@ -132,7 +132,13 @@ async function verifySetup() {
 
     if (freshchatApiKey && freshchatApiUrl && !freshchatApiKey.includes('your-')) {
         try {
-            const response = await axios.get(`${freshchatApiUrl}/users`, {
+            const normalizedFreshchatApiUrl = freshchatApiUrl.replace(/\/$/, '');
+            const response = await axios.get(`${normalizedFreshchatApiUrl}/channels`, {
+                params: {
+                    items_per_page: 1,
+                    sort_by: 'name',
+                    sort_order: 'asc'
+                },
                 headers: {
                     'Authorization': `Bearer ${freshchatApiKey}`,
                     'Content-Type': 'application/json'
