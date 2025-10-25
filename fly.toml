@@ -1,6 +1,6 @@
 # fly.toml app configuration file generated for teams-freshchat
 
-app = "teams-freshchat"
+app = "freshchat-bridge"
 primary_region = "nrt"
 
 [build]
