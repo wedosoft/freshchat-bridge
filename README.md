@@ -12,6 +12,8 @@ A proof-of-concept implementation demonstrating real-time bidirectional message 
 
 ✅ Side-loaded Teams bot with Bot Framework integration
 ✅ Bidirectional message flow (Teams ↔ Freshchat)
+✅ Image and file attachment support with bidirectional transfer
+✅ Embedded image display in Teams messages (markdown format)
 ✅ In-memory conversation mapping
 ✅ Ngrok tunnel support for local development
 ✅ Console logging for demo observability
@@ -19,7 +21,6 @@ A proof-of-concept implementation demonstrating real-time bidirectional message 
 
 ## Limitations (By Design)
 
-❌ Text messages only (no attachments)
 ❌ In-memory storage (restarting clears all mappings)
 ❌ No message queuing or retry logic
 ❌ No production-grade security or monitoring
@@ -232,6 +233,23 @@ You should see:
    - User name: "John Doe"
    - Source: "Microsoft Teams"
 
+5. **Send image from Teams:**
+   - Attach an image file to a message
+   - Send to the bot
+
+6. **Show console output:**
+   ```
+   [Teams] Processing 1 attachment(s)...
+   [Teams] Attachment: product-image.png (image/png)
+   [Freshchat] Uploading file: product-image.png (image/png)
+   [Freshchat] File uploaded successfully
+   [Teams → Freshchat] File uploaded: product-image.png, hash: abc123
+   ```
+
+7. **Show Freshchat dashboard:**
+   - Image appears embedded in the conversation
+   - File is viewable directly in Freshchat
+
 #### Part 2: Freshchat → Teams
 
 1. **Open conversation in Freshchat**
@@ -258,6 +276,25 @@ You should see:
    도와드리겠습니다. 어떤 제품의 환불을 원하시나요?
    ```
 
+5. **Agent sends image in Freshchat:**
+   - Upload and send an image (e.g., refund form)
+
+6. **Show console output:**
+   ```
+   [Freshchat] Fetching message details for attachment hydration...
+   [Freshchat] Download request (auth): https://files.freshchat.com/...
+   [Teams] Uploading attachment to Teams: refund-form.png
+   ```
+
+7. **Show Teams channel:**
+   - Bot posts agent reply with embedded image:
+   ```
+   Agent Reply: (첨부파일 전달)
+   
+   ![refund-form.png](https://teams-attachment-url/...)
+   ```
+   - Image displays inline in Teams message
+
 #### Part 3: Continued Conversation
 
 1. **User replies in Teams:**
@@ -277,9 +314,10 @@ You should see:
 #### Highlight Key Points
 
 - ✅ **Real-time bidirectional message flow**
+- ✅ **Image and file attachment support** (bidirectional transfer)
+- ✅ **Images embedded inline in Teams** (markdown format)
 - ✅ **Conversation context maintained** (same Freshchat thread)
 - ✅ **No manual mapping required** (automatic association)
-- ⚠️ **Text only** (as per PoC scope)
 - ⚠️ **In-memory storage** (restart clears state)
 
 ---
@@ -422,8 +460,8 @@ If this PoC is approved, the following enhancements are recommended for MVP:
 - [ ] Add retry logic and dead-letter queue handling
 
 ### Features
-- [ ] Attachment support (images, documents)
-- [ ] Message mentions and formatting
+- [ ] Advanced attachment types (audio, video streaming)
+- [ ] Message mentions and advanced formatting
 - [ ] Routing logic / IntelliAssign integration
 - [ ] Conversation assignment and handoff
 - [ ] Typing indicators

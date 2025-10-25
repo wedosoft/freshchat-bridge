@@ -124,25 +124,51 @@ class FreshchatClient {
     /**
      * Create a new conversation in Freshchat
      */
-    async createConversation(userId, userName, initialMessage) {
+    async createConversation(userId, userName, initialMessage, attachments = []) {
         try {
             console.log(`[Freshchat] Creating conversation for user: ${userName}`);
 
             // First, create or get user
             const user = await this.createOrGetUser(userId, userName);
 
+            // Build message parts
+            const messageParts = [];
+
+            // Add text if provided
+            if (initialMessage) {
+                messageParts.push({
+                    text: {
+                        content: initialMessage
+                    }
+                });
+            }
+
+            // Add file attachments
+            for (const attachment of attachments) {
+                const filePart = {
+                    file: {
+                        name: attachment.name,
+                        content_type: attachment.content_type,
+                        file_size_in_bytes: attachment.file_size_in_bytes
+                    }
+                };
+
+                // file_hash를 사용하거나 url을 사용
+                if (attachment.file_hash) {
+                    filePart.file.file_hash = attachment.file_hash;
+                } else if (attachment.url) {
+                    filePart.file.url = attachment.url;
+                }
+
+                messageParts.push(filePart);
+            }
+
             // Create conversation
             const conversationResponse = await this.axiosInstance.post('/conversations', {
                 channel_id: this.inboxId,
                 messages: [
                     {
-                        message_parts: [
-                            {
-                                text: {
-                                    content: initialMessage
-                                }
-                            }
-                        ],
+                        message_parts: messageParts,
                         actor_type: 'user',
                         actor_id: user.id
                     }
@@ -586,10 +612,12 @@ async function handleTeamsMessage(context) {
 
         if (!mapping) {
             // First message in this conversation - create new Freshchat conversation
+            // Include attachments in the initial message for proper embedding
             const freshchatConv = await freshchatClient.createConversation(
                 activity.from.id,
                 activity.from.name,
-                activity.text || '[File attachment]'
+                activity.text || (freshchatAttachments.length > 0 ? '[File attachment]' : ''),
+                freshchatAttachments
             );
 
             const freshchatConversationGuid = freshchatConv?.conversation_id
@@ -615,22 +643,6 @@ async function handleTeamsMessage(context) {
 
             if (freshchatConversationGuid && !freshchatConversationNumericId) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
-            }
-
-            // Send attachments if any
-            if (freshchatAttachments.length > 0) {
-                const targetConversationId = resolveFreshchatConversationId(mapping);
-
-                if (!targetConversationId) {
-                    throw new Error('Freshchat conversation ID unavailable for attachment transfer');
-                }
-
-                await freshchatClient.sendMessage(
-                    targetConversationId,
-                    mapping.freshchatUserId,
-                    null,
-                    freshchatAttachments
-                );
             }
         } else {
             const targetConversationId = resolveFreshchatConversationId(mapping);
