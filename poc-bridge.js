@@ -13,6 +13,8 @@ const NodeRSA = require('node-rsa');
 const FormData = require('form-data');
 const mime = require('mime-types');
 const { URL } = require('url');
+const fs = require('fs');
+const path = require('path');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -29,6 +31,16 @@ const FRESHCHAT_API_KEY = process.env.FRESHCHAT_API_KEY;
 const FRESHCHAT_API_URL = process.env.FRESHCHAT_API_URL || 'https://api.freshchat.com/v2';
 const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
+const NGROK_URL = process.env.NGROK_URL;
+
+// ============================================================================
+// File Storage Setup
+// ============================================================================
+
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR);
+}
 
 // ============================================================================
 // In-Memory Storage
@@ -315,34 +327,31 @@ class FreshchatClient {
 
             // Add file attachments
             for (const attachment of attachments) {
-                const isImage = attachment.content_type && attachment.content_type.startsWith('image/');
                 let messagePart;
 
-                if (isImage) {
-                    // Handle as an image attachment
+                // Check if it's an image to be embedded via URL
+                if (attachment.url) {
                     messagePart = {
                         image: {
-                            url: attachment.url, // URL must be provided for images
+                            url: attachment.url
                         }
                     };
-                } else {
-                    // Handle as a file attachment
+                }
+                // Check if it's a file uploaded to Freshchat
+                else if (attachment.file_hash) {
                     messagePart = {
                         file: {
                             name: attachment.name,
                             content_type: attachment.content_type,
-                            file_size_in_bytes: attachment.file_size_in_bytes
+                            file_size_in_bytes: attachment.file_size_in_bytes,
+                            file_hash: attachment.file_hash
                         }
                     };
-
-                    // Use file_hash if available, otherwise fallback to URL
-                    if (attachment.file_hash) {
-                        messagePart.file.file_hash = attachment.file_hash;
-                    } else if (attachment.url) {
-                        messagePart.file.url = attachment.url;
-                    }
                 }
-                messageParts.push(messagePart);
+
+                if (messagePart) {
+                    messageParts.push(messagePart);
+                }
             }
 
             const response = await this.axiosInstance.post(`/conversations/${conversationId}/messages`, {
@@ -560,27 +569,43 @@ async function handleTeamsMessage(context) {
             for (const attachment of activity.attachments) {
                 try {
                     console.log(`[Teams] Attachment: ${attachment.name} (${attachment.contentType})`);
+                    const isImage = attachment.contentType && attachment.contentType.startsWith('image/');
 
                     // Download file from Teams
                     const fileBuffer = await downloadTeamsAttachment(context, attachment);
 
-                    // Upload to Freshchat
-                    const uploadedFile = await freshchatClient.uploadFile(
-                        fileBuffer,
-                        attachment.name,
-                        attachment.contentType
-                    );
+                    if (isImage) {
+                        // For images, save locally and create a public URL
+                        if (!NGROK_URL) {
+                            throw new Error('NGROK_URL environment variable is not set. Cannot serve images.');
+                        }
+                        const filename = `${Date.now()}-${attachment.name}`;
+                        const filepath = path.join(UPLOADS_DIR, filename);
+                        fs.writeFileSync(filepath, fileBuffer);
 
-                    // Freshchat API returns: file_name, file_size, file_content_type, file_extension_type, file_hash, url
-                    freshchatAttachments.push({
-                        name: uploadedFile.file_name || attachment.name,
-                        file_size_in_bytes: uploadedFile.file_size || fileBuffer.length,
-                        content_type: uploadedFile.file_content_type || attachment.contentType,
-                        file_hash: uploadedFile.file_hash,
-                        url: uploadedFile.url // Pass the URL for image embedding
-                    });
+                        const publicUrl = `${NGROK_URL}/files/${filename}`;
+                        freshchatAttachments.push({
+                            url: publicUrl,
+                            content_type: attachment.contentType
+                        });
+                        console.log(`[Teams → Freshchat] Image served at: ${publicUrl}`);
 
-                    console.log(`[Teams → Freshchat] File uploaded: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
+                    } else {
+                        // For other files, upload to Freshchat and use file_hash
+                        const uploadedFile = await freshchatClient.uploadFile(
+                            fileBuffer,
+                            attachment.name,
+                            attachment.contentType
+                        );
+
+                        freshchatAttachments.push({
+                            name: uploadedFile.file_name || attachment.name,
+                            file_size_in_bytes: uploadedFile.file_size || fileBuffer.length,
+                            content_type: uploadedFile.file_content_type || attachment.contentType,
+                            file_hash: uploadedFile.file_hash
+                        });
+                        console.log(`[Teams → Freshchat] File uploaded: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
+                    }
                 } catch (error) {
                     console.error(`[Teams] Failed to process attachment ${attachment.name}:`, error.message);
                 }
@@ -668,6 +693,7 @@ async function handleTeamsMessage(context) {
 
 const app = express();
 app.use(express.json());
+app.use('/files', express.static(UPLOADS_DIR));
 
 /**
  * Health check endpoint
