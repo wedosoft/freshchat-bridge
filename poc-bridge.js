@@ -695,6 +695,19 @@ const app = express();
 app.use(express.json());
 app.use('/files', express.static(UPLOADS_DIR));
 
+// Allow Azure portal and Bot Framework service to call the bot endpoint during tests
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+
+    return next();
+});
+
 /**
  * Health check endpoint
  */
@@ -714,13 +727,11 @@ app.get('/', (req, res) => {
 /**
  * Bot Framework endpoint - receives messages from Teams
  */
-app.post('/bot/callback', async (req, res) => {
+const processBotRequest = async (req, res) => {
     await adapter.process(req, res, async (context) => {
-        // Handle different activity types
         if (context.activity.type === 'message') {
             await handleTeamsMessage(context);
         } else if (context.activity.type === 'conversationUpdate') {
-            // Bot added to conversation
             if (context.activity.membersAdded) {
                 for (const member of context.activity.membersAdded) {
                     if (member.id !== context.activity.recipient.id) {
@@ -733,7 +744,10 @@ app.post('/bot/callback', async (req, res) => {
             }
         }
     });
-});
+};
+
+app.post('/bot/callback', processBotRequest);
+app.post('/api/messages', processBotRequest);
 
 /**
  * Freshchat webhook endpoint - receives messages from Freshchat agents
