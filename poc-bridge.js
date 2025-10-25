@@ -146,6 +146,43 @@ function resolveFreshchatConversationId(mapping) {
             : null;
 }
 
+function buildFreshchatMessageParts(message, attachments = []) {
+    const messageParts = [];
+
+    if (message && String(message).trim().length > 0) {
+        messageParts.push({
+            text: {
+                content: message
+            }
+        });
+    }
+
+    for (const attachment of attachments) {
+        if (!attachment) {
+            continue;
+        }
+
+        if (attachment.url) {
+            messageParts.push({
+                image: {
+                    url: attachment.url
+                }
+            });
+        } else if (attachment.file_hash) {
+            messageParts.push({
+                file: {
+                    name: attachment.name,
+                    content_type: attachment.content_type,
+                    file_size_in_bytes: attachment.file_size_in_bytes,
+                    file_hash: attachment.file_hash
+                }
+            });
+        }
+    }
+
+    return messageParts;
+}
+
 // ============================================================================
 // Bot Framework Setup
 // ============================================================================
@@ -186,25 +223,28 @@ class FreshchatClient {
     /**
      * Create a new conversation in Freshchat
      */
-    async createConversation(userId, userName, initialMessage) {
+    async createConversation(userId, userName, initialMessage, attachments = []) {
         try {
             console.log(`[Freshchat] Creating conversation for user: ${userName}`);
 
             // First, create or get user
             const user = await this.createOrGetUser(userId, userName);
 
+            const messageParts = buildFreshchatMessageParts(initialMessage, attachments);
+            if (messageParts.length === 0) {
+                messageParts.push({
+                    text: {
+                        content: '[Attachment]'
+                    }
+                });
+            }
+
             // Create conversation
             const conversationResponse = await this.axiosInstance.post('/conversations', {
                 channel_id: this.inboxId,
                 messages: [
                     {
-                        message_parts: [
-                            {
-                                text: {
-                                    content: initialMessage
-                                }
-                            }
-                        ],
+                        message_parts: messageParts,
                         actor_type: 'user',
                         actor_id: user.id
                     }
@@ -376,44 +416,9 @@ class FreshchatClient {
                 }))
             });
 
-            const messageParts = [];
-
-            // Add text if provided
-            if (message) {
-                messageParts.push({
-                    text: {
-                        content: message
-                    }
-                });
-            }
-
-            // Add file attachments
-            for (const attachment of attachments) {
-                let messagePart;
-
-                // Check if it's an image to be embedded via URL
-                if (attachment.url) {
-                    messagePart = {
-                        image: {
-                            url: attachment.url
-                        }
-                    };
-                }
-                // Check if it's a file uploaded to Freshchat
-                else if (attachment.file_hash) {
-                    messagePart = {
-                        file: {
-                            name: attachment.name,
-                            content_type: attachment.content_type,
-                            file_size_in_bytes: attachment.file_size_in_bytes,
-                            file_hash: attachment.file_hash
-                        }
-                    };
-                }
-
-                if (messagePart) {
-                    messageParts.push(messagePart);
-                }
+            const messageParts = buildFreshchatMessageParts(message, attachments);
+            if (messageParts.length === 0) {
+                throw new Error('No content to send to Freshchat. Provide text or attachments.');
             }
 
             const response = await this.axiosInstance.post(`/conversations/${conversationId}/messages`, {
@@ -692,10 +697,15 @@ async function handleTeamsMessage(context) {
 
         if (!mapping) {
             // First message in this conversation - create new Freshchat conversation
+            const initialMessage = activity.text && activity.text.trim().length > 0
+                ? activity.text
+                : null;
+
             const freshchatConv = await freshchatClient.createConversation(
                 activity.from.id,
                 activity.from.name,
-                activity.text || '[File attachment]'
+                initialMessage,
+                freshchatAttachments
             );
 
             const freshchatConversationGuid = freshchatConv?.conversation_id
@@ -721,22 +731,6 @@ async function handleTeamsMessage(context) {
 
             if (freshchatConversationGuid && !freshchatConversationNumericId) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
-            }
-
-            // Send attachments if any
-            if (freshchatAttachments.length > 0) {
-                const targetConversationId = resolveFreshchatConversationId(mapping);
-
-                if (!targetConversationId) {
-                    throw new Error('Freshchat conversation ID unavailable for attachment transfer');
-                }
-
-                await freshchatClient.sendMessage(
-                    targetConversationId,
-                    mapping.freshchatUserId,
-                    null,
-                    freshchatAttachments
-                );
             }
         } else {
             const targetConversationId = resolveFreshchatConversationId(mapping);
