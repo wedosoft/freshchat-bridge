@@ -1,8 +1,8 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.2.1",
-  "id": "06982189-9e7a-4027-9661-0ec1089f4a45",
+  "version": "1.2.2",
+  "id": "6a46afe9-3109-4af6-a0f9-275f6fddf929",
   "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
     "name": "We Do Soft",
@@ -25,7 +25,7 @@
   "accentColor": "#FFFFFF",
   "bots": [
     {
-      "botId": "06982189-9e7a-4027-9661-0ec1089f4a45",
+      "botId": "6a46afe9-3109-4af6-a0f9-275f6fddf929",
       "scopes": [
         "personal",
         "team",

@@ -44,7 +44,7 @@ jobs:
             | jq -r '.access_token')
           
           # Check if app already exists
-          APP_ID="06982189-9e7a-4027-9661-0ec1089f4a45"
+          APP_ID="6a46afe9-3109-4af6-a0f9-275f6fddf929"
           EXISTING_APP=$(curl -s -X GET \
             "https://graph.microsoft.com/v1.0/appCatalogs/teamsApps?$filter=externalId eq '$APP_ID'" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
