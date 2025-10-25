@@ -57,6 +57,56 @@ const conversationMap = new Map();
  */
 const reverseMap = new Map();
 
+/**
+ * Track processed Freshchat message IDs to avoid duplicate delivery.
+ * Structure: { messageId: timestamp }
+ */
+const processedFreshchatMessages = new Map();
+const FRESHCHAT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+function cleanupProcessedFreshchatMessages() {
+    const now = Date.now();
+    for (const [messageId, timestamp] of processedFreshchatMessages.entries()) {
+        if (now - timestamp > FRESHCHAT_DEDUP_TTL_MS) {
+            processedFreshchatMessages.delete(messageId);
+        }
+    }
+
+    // Prevent unbounded growth in extreme cases
+    if (processedFreshchatMessages.size > 2000) {
+        const sortedEntries = Array.from(processedFreshchatMessages.entries())
+            .sort((a, b) => a[1] - b[1]);
+        const excess = processedFreshchatMessages.size - 2000;
+        for (let i = 0; i < excess; i += 1) {
+            processedFreshchatMessages.delete(sortedEntries[i][0]);
+        }
+    }
+}
+
+function hasProcessedFreshchatMessage(messageId) {
+    if (!messageId) {
+        return false;
+    }
+
+    const timestamp = processedFreshchatMessages.get(messageId);
+    if (timestamp) {
+        if (Date.now() - timestamp <= FRESHCHAT_DEDUP_TTL_MS) {
+            return true;
+        }
+        processedFreshchatMessages.delete(messageId);
+    }
+    return false;
+}
+
+function markFreshchatMessageProcessed(messageId) {
+    if (!messageId) {
+        return;
+    }
+
+    processedFreshchatMessages.set(messageId, Date.now());
+    cleanupProcessedFreshchatMessages();
+}
+
 function updateConversationMapping(teamsConversationId, updates) {
     const existing = conversationMap.get(teamsConversationId) || {};
     const merged = { ...existing };
@@ -810,6 +860,7 @@ app.post('/freshchat/webhook', async (req, res) => {
         // Handle message_create event
         if (action === 'message_create' && data?.message) {
             const message = data.message;
+            const messageId = message?.id ? String(message.id) : null;
             const freshchatConversationId = message.freshchat_conversation_id
                 ? String(message.freshchat_conversation_id)
                 : data?.freshchat_conversation_id
@@ -820,10 +871,18 @@ app.post('/freshchat/webhook', async (req, res) => {
             const actorType = actorTypeRaw ? String(actorTypeRaw).toLowerCase() : 'unknown';
 
             console.log(`[Freshchat] Processing message_create event`);
+            if (messageId) {
+                console.log(`[Freshchat] Message ID: ${messageId}`);
+            }
             console.log(`[Freshchat] Actor type: ${actorType}`);
 
             if (!freshchatConversationId) {
                 console.log('[Freshchat] Payload missing freshchat_conversation_id - cannot route message');
+                return res.sendStatus(200);
+            }
+
+            if (messageId && hasProcessedFreshchatMessage(messageId)) {
+                console.log(`[Freshchat] Duplicate webhook detected for message ${messageId} - skipping`);
                 return res.sendStatus(200);
             }
 
@@ -1050,6 +1109,16 @@ app.post('/freshchat/webhook', async (req, res) => {
                     await turnContext.sendActivity(composedText);
                 }
             );
+
+            if (messageId) {
+                const canMarkProcessed = missingUrls.length === 0 && downloadFailures.length === 0;
+                if (canMarkProcessed) {
+                    markFreshchatMessageProcessed(messageId);
+                    console.log(`[Freshchat] Marked message ${messageId} as processed`);
+                } else {
+                    console.log(`[Freshchat] Message ${messageId} not marked as processed (missingUrls=${missingUrls.length}, downloadFailures=${downloadFailures.length})`);
+                }
+            }
 
             console.log('[Freshchat → Teams] Message forwarded successfully');
         }
