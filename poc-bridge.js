@@ -315,22 +315,34 @@ class FreshchatClient {
 
             // Add file attachments
             for (const attachment of attachments) {
-                const filePart = {
-                    file: {
-                        name: attachment.name,
-                        content_type: attachment.content_type,
-                        file_size_in_bytes: attachment.file_size_in_bytes
+                const isImage = attachment.content_type && attachment.content_type.startsWith('image/');
+                let messagePart;
+
+                if (isImage) {
+                    // Handle as an image attachment
+                    messagePart = {
+                        image: {
+                            url: attachment.url, // URL must be provided for images
+                        }
+                    };
+                } else {
+                    // Handle as a file attachment
+                    messagePart = {
+                        file: {
+                            name: attachment.name,
+                            content_type: attachment.content_type,
+                            file_size_in_bytes: attachment.file_size_in_bytes
+                        }
+                    };
+
+                    // Use file_hash if available, otherwise fallback to URL
+                    if (attachment.file_hash) {
+                        messagePart.file.file_hash = attachment.file_hash;
+                    } else if (attachment.url) {
+                        messagePart.file.url = attachment.url;
                     }
-                };
-
-                // file_hash를 사용하거나 url을 사용
-                if (attachment.file_hash) {
-                    filePart.file.file_hash = attachment.file_hash;
-                } else if (attachment.url) {
-                    filePart.file.url = attachment.url;
                 }
-
-                messageParts.push(filePart);
+                messageParts.push(messagePart);
             }
 
             const response = await this.axiosInstance.post(`/conversations/${conversationId}/messages`, {
@@ -369,38 +381,28 @@ class FreshchatClient {
         }
 
         try {
-            const maskedUrl = (() => {
-                try {
-                    const parsed = new URL(fileUrl);
-                    parsed.search = '';
-                    return parsed.toString();
-                } catch (urlError) {
-                    return fileUrl;
-                }
-            })();
+            const parsedUrl = new URL(fileUrl);
+            const apiUrl = new URL(this.apiUrl);
 
-            console.log(`[Freshchat] Download request (auth): ${maskedUrl}`);
-            const primaryResponse = await axios.get(fileUrl, {
+            const maskedUrl = `${parsedUrl.protocol}//${parsedUrl.host}${parsedUrl.pathname}`;
+
+            const isApiUrl = parsedUrl.hostname === apiUrl.hostname;
+
+            const headers = {};
+            if (isApiUrl) {
+                headers['Authorization'] = `Bearer ${this.apiKey}`;
+                console.log(`[Freshchat] Download request (auth): ${maskedUrl}`);
+            } else {
+                console.log(`[Freshchat] Download request (public): ${maskedUrl}`);
+            }
+
+            const response = await axios.get(fileUrl, {
                 responseType: 'arraybuffer',
-                headers: {
-                    Authorization: `Bearer ${this.apiKey}`
-                },
+                headers,
                 validateStatus: () => true
             });
 
-            let response = primaryResponse;
-
-            console.log(`[Freshchat] Download response (auth): status=${response.status}`);
-
-            if (response.status >= 400) {
-                console.warn(`[Freshchat] Authenticated download returned status ${response.status}. Retrying without Authorization header.`);
-                console.log(`[Freshchat] Download request (anon): ${maskedUrl}`);
-                response = await axios.get(fileUrl, {
-                    responseType: 'arraybuffer',
-                    validateStatus: () => true
-                });
-                console.log(`[Freshchat] Download response (anon): status=${response.status}`);
-            }
+            console.log(`[Freshchat] Download response: status=${response.status}`);
 
             if (response.status >= 400) {
                 throw new Error(`HTTP ${response.status}`);
@@ -569,12 +571,13 @@ async function handleTeamsMessage(context) {
                         attachment.contentType
                     );
 
-                    // Freshchat API returns: file_name, file_size, file_content_type, file_extension_type, file_hash
+                    // Freshchat API returns: file_name, file_size, file_content_type, file_extension_type, file_hash, url
                     freshchatAttachments.push({
                         name: uploadedFile.file_name || attachment.name,
                         file_size_in_bytes: uploadedFile.file_size || fileBuffer.length,
                         content_type: uploadedFile.file_content_type || attachment.contentType,
-                        file_hash: uploadedFile.file_hash
+                        file_hash: uploadedFile.file_hash,
+                        url: uploadedFile.url // Pass the URL for image embedding
                     });
 
                     console.log(`[Teams → Freshchat] File uploaded: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
@@ -1010,28 +1013,36 @@ app.post('/freshchat/webhook', async (req, res) => {
                         composedText = `${textPrefix}\n${messageText}`;
                     }
 
+                    const finalAttachments = [];
+                    const imageMarkdownLines = [];
+
+                    for (const attachment of uploadedAttachments) {
+                        const isImage = typeof attachment.contentType === 'string' && attachment.contentType.startsWith('image/');
+                        if (isImage) {
+                            // For images, generate Markdown to embed them in the message text
+                            const altText = attachment.name || 'image';
+                            imageMarkdownLines.push(`![${altText}](${attachment.contentUrl})`);
+                        } else {
+                            // For other files, create a downloadable card
+                            finalAttachments.push(CardFactory.attachment(attachment));
+                        }
+                    }
+
+                    if (imageMarkdownLines.length > 0) {
+                        if (messageText) {
+                            composedText = `${composedText}\n\n${imageMarkdownLines.join('\n')}`;
+                        } else {
+                            composedText = `${textPrefix}\n${imageMarkdownLines.join('\n')}`;
+                        }
+                    } else if (!messageText && teamsAttachmentPayloads.length > 0) {
+                        composedText = `${textPrefix} (첨부파일 전달)`;
+                    }
+
                     const messageActivity = {
                         type: 'message',
                         text: composedText,
-                        attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined
+                        attachments: finalAttachments.length > 0 ? finalAttachments : undefined
                     };
-
-                    const imageMarkdowns = uploadedAttachments
-                        .filter((attachment) => typeof attachment.contentType === 'string' && attachment.contentType.startsWith('image/'))
-                        .map((attachment) => {
-                            const altText = attachment.name || 'image';
-                            return `![${altText}](${attachment.contentUrl})`;
-                        });
-
-                    if (imageMarkdowns.length > 0) {
-                        if (messageText) {
-                            messageActivity.text = `${messageActivity.text}\n\n${imageMarkdowns.join('\n')}`;
-                        } else {
-                            messageActivity.text = `${textPrefix}\n${imageMarkdowns.join('\n')}`;
-                        }
-                    } else if (!messageText && teamsAttachmentPayloads.length > 0) {
-                        messageActivity.text = `${textPrefix} (첨부파일 전달)`;
-                    }
 
                     if (uploadFailures.length > 0) {
                         const uploadWarning = `⚠️ 첨부파일 업로드 실패: ${uploadFailures.join(', ')}. Freshchat에서 직접 확인해주세요.`;
