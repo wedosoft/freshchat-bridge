@@ -7,6 +7,7 @@
 
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const axios = require('axios');
 const crypto = require('crypto');
 const NodeRSA = require('node-rsa');
@@ -692,21 +693,9 @@ async function handleTeamsMessage(context) {
 // ============================================================================
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 app.use('/files', express.static(UPLOADS_DIR));
-
-// Allow Azure portal and Bot Framework service to call the bot endpoint during tests
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-
-    if (req.method === 'OPTIONS') {
-        return res.sendStatus(204);
-    }
-
-    return next();
-});
 
 /**
  * Health check endpoint
