@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "id": "06982189-9e7a-4027-9661-0ec1089f4a45",
   "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
