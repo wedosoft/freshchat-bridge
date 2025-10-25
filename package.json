@@ -1,7 +1,7 @@
 {
-  "name": "teams-freshchat-poc",
+  "name": "freshchat-bridge",
   "version": "0.1.0",
-  "description": "PoC for Microsoft Teams to Freshchat message bridge",
+  "description": "Bridge for Microsoft Teams to Freshchat message synchronization",
   "main": "poc-bridge.js",
   "scripts": {
     "start": "node poc-bridge.js",

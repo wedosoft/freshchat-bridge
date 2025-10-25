@@ -1,6 +1,6 @@
-# Teams ↔ Freshchat Minimal Bridge - PoC
+# Freshchat Bridge
 
-A proof-of-concept implementation demonstrating real-time bidirectional message transfer between Microsoft Teams and Freshchat.
+A production-ready bidirectional message bridge between Microsoft Teams and Freshchat.
 
 ## Purpose
 
@@ -46,7 +46,7 @@ Before starting, ensure you have:
 
 ```bash
 # Navigate to project directory
-cd ms-teams
+cd freshchat-bridge
 
 # Install Node.js dependencies
 npm install
