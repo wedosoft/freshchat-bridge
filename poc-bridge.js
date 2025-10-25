@@ -579,11 +579,11 @@ async function handleTeamsMessage(context) {
                         if (!NGROK_URL) {
                             throw new Error('NGROK_URL environment variable is not set. Cannot serve images.');
                         }
-                        const filename = `${Date.now()}-${attachment.name}`;
+                        const filename = `${Date.now()}-${attachment.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
                         const filepath = path.join(UPLOADS_DIR, filename);
                         fs.writeFileSync(filepath, fileBuffer);
 
-                        const publicUrl = `${NGROK_URL}/files/${filename}`;
+                        const publicUrl = `${NGROK_URL.replace(/\/$/, '')}/files/${filename}`;
                         freshchatAttachments.push({
                             url: publicUrl,
                             content_type: attachment.contentType
