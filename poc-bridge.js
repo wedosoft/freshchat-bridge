@@ -138,6 +138,12 @@ class FreshchatClient {
 
         // Add file attachments
         for (const attachment of attachments) {
+            // Validate that attachment has required fields
+            if (!attachment.file_hash && !attachment.url) {
+                console.warn('[Freshchat] Skipping attachment without file_hash or url:', attachment.name);
+                continue;
+            }
+
             const filePart = {
                 file: {
                     name: attachment.name,
