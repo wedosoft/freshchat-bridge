@@ -1,6 +1,6 @@
-# fly.toml app configuration file generated for ms-teams-freshchat
+# fly.toml app configuration file generated for teams-freshchat
 
-app = "ms-teams-freshchat"
+app = "teams-freshchat"
 primary_region = "nrt"
 
 [build]
