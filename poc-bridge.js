@@ -122,6 +122,44 @@ class FreshchatClient {
     }
 
     /**
+     * Build message parts from text and attachments
+     */
+    buildMessageParts(message, attachments = []) {
+        const messageParts = [];
+
+        // Add text if provided
+        if (message) {
+            messageParts.push({
+                text: {
+                    content: message
+                }
+            });
+        }
+
+        // Add file attachments
+        for (const attachment of attachments) {
+            const filePart = {
+                file: {
+                    name: attachment.name,
+                    content_type: attachment.content_type,
+                    file_size_in_bytes: attachment.file_size_in_bytes
+                }
+            };
+
+            // Use file_hash or url
+            if (attachment.file_hash) {
+                filePart.file.file_hash = attachment.file_hash;
+            } else if (attachment.url) {
+                filePart.file.url = attachment.url;
+            }
+
+            messageParts.push(filePart);
+        }
+
+        return messageParts;
+    }
+
+    /**
      * Create a new conversation in Freshchat
      */
     async createConversation(userId, userName, initialMessage, attachments = []) {
@@ -132,36 +170,7 @@ class FreshchatClient {
             const user = await this.createOrGetUser(userId, userName);
 
             // Build message parts
-            const messageParts = [];
-
-            // Add text if provided
-            if (initialMessage) {
-                messageParts.push({
-                    text: {
-                        content: initialMessage
-                    }
-                });
-            }
-
-            // Add file attachments
-            for (const attachment of attachments) {
-                const filePart = {
-                    file: {
-                        name: attachment.name,
-                        content_type: attachment.content_type,
-                        file_size_in_bytes: attachment.file_size_in_bytes
-                    }
-                };
-
-                // file_hash를 사용하거나 url을 사용
-                if (attachment.file_hash) {
-                    filePart.file.file_hash = attachment.file_hash;
-                } else if (attachment.url) {
-                    filePart.file.url = attachment.url;
-                }
-
-                messageParts.push(filePart);
-            }
+            const messageParts = this.buildMessageParts(initialMessage, attachments);
 
             // Create conversation
             const conversationResponse = await this.axiosInstance.post('/conversations', {
@@ -328,36 +337,8 @@ class FreshchatClient {
 
             console.log(`[Freshchat] Sending message to conversation: ${conversationId}`);
 
-            const messageParts = [];
-
-            // Add text if provided
-            if (message) {
-                messageParts.push({
-                    text: {
-                        content: message
-                    }
-                });
-            }
-
-            // Add file attachments
-            for (const attachment of attachments) {
-                const filePart = {
-                    file: {
-                        name: attachment.name,
-                        content_type: attachment.content_type,
-                        file_size_in_bytes: attachment.file_size_in_bytes
-                    }
-                };
-
-                // file_hash를 사용하거나 url을 사용
-                if (attachment.file_hash) {
-                    filePart.file.file_hash = attachment.file_hash;
-                } else if (attachment.url) {
-                    filePart.file.url = attachment.url;
-                }
-
-                messageParts.push(filePart);
-            }
+            // Build message parts using shared helper
+            const messageParts = this.buildMessageParts(message, attachments);
 
             const response = await this.axiosInstance.post(`/conversations/${conversationId}/messages`, {
                 message_parts: messageParts,
@@ -367,7 +348,7 @@ class FreshchatClient {
 
             console.log(`[Freshchat] Message sent successfully, Message ID: ${response.data.id}`);
 
-            // 메시지 전송 후 실제 파일 URL을 얻기 위해 메시지 조회
+            // Fetch message details to get actual file URLs after upload
             if (attachments.length > 0 && /^[0-9]+$/.test(String(conversationId))) {
                 const detailedMessage = await this.getMessageWithRetry(conversationId, response.data.id, response.data.created_time);
                 if (detailedMessage) {
