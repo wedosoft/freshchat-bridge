@@ -193,6 +193,81 @@ function buildFreshchatMessageParts(message, attachments = []) {
     return messageParts;
 }
 
+function sanitizeFilename(name) {
+    if (!name || typeof name !== 'string') {
+        return '';
+    }
+
+    return name
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9.\-_]/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 120);
+}
+
+function extractAttachmentName(attachment) {
+    if (!attachment) {
+        return '';
+    }
+
+    const candidates = [
+        attachment.name,
+        attachment.filename,
+        attachment.fileName,
+        attachment.content?.fileName,
+        attachment.content?.file_name,
+        attachment.content?.filename,
+        attachment.content?.displayName
+    ];
+
+    return candidates.find((value) => typeof value === 'string' && value.trim().length > 0) || '';
+}
+
+function extractAttachmentContentType(attachment) {
+    if (!attachment) {
+        return '';
+    }
+
+    const candidates = [
+        attachment.contentType,
+        attachment.content?.contentType,
+        attachment.content?.fileType,
+        attachment.content?.mimeType
+    ];
+
+    const match = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+    return match ? match.toLowerCase() : '';
+}
+
+function buildStoredFilename(preferredName, contentType) {
+    const timestamp = Date.now();
+    let sanitized = sanitizeFilename(preferredName);
+    let extension = '';
+
+    if (sanitized) {
+        const detectedExt = path.extname(sanitized);
+        if (detectedExt) {
+            extension = detectedExt;
+            sanitized = sanitized.slice(0, -detectedExt.length);
+        }
+    }
+
+    if (!sanitized) {
+        sanitized = 'attachment';
+    }
+
+    if (!extension) {
+        const derivedExt = contentType ? mime.extension(contentType) : null;
+        if (derivedExt) {
+            extension = `.${derivedExt}`;
+        }
+    }
+
+    return `${timestamp}-${sanitized}${extension}`;
+}
+
 // ============================================================================
 // Bot Framework Setup
 // ============================================================================
@@ -613,22 +688,74 @@ function verifyFreshchatSignature(payload, signature) {
  * Download file from Teams
  */
 async function downloadTeamsAttachment(context, attachment) {
-    try {
-        // Bot Framework Connector를 사용하여 올바른 토큰 얻기
-        const token = await context.adapter.credentials.getToken();
+    const candidates = [];
 
-        const response = await axios.get(attachment.contentUrl, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            },
-            responseType: 'arraybuffer'
+    if (attachment?.contentUrl && typeof attachment.contentUrl === 'string') {
+        candidates.push({
+            url: attachment.contentUrl,
+            label: 'contentUrl',
+            requiresAuth: true
         });
-
-        return Buffer.from(response.data);
-    } catch (error) {
-        console.error('[Teams] Error downloading attachment:', error.message);
-        throw error;
     }
+
+    const content = attachment?.content || {};
+    const alternativeUrls = [
+        { key: 'downloadUrl', value: content.downloadUrl },
+        { key: 'download-url', value: content['download-url'] },
+        { key: 'fileUrl', value: content.fileUrl },
+        { key: 'file-url', value: content['file-url'] },
+        { key: 'contentUrl', value: content.contentUrl },
+        { key: 'content-url', value: content['content-url'] }
+    ];
+
+    for (const alt of alternativeUrls) {
+        if (typeof alt.value === 'string' && alt.value.startsWith('http')) {
+            candidates.push({
+                url: alt.value,
+                label: alt.key,
+                requiresAuth: false
+            });
+        }
+    }
+
+    if (candidates.length === 0) {
+        throw new Error('Attachment does not include a downloadable URL');
+    }
+
+    let token = null;
+    let lastError = null;
+
+    for (const candidate of candidates) {
+        try {
+            const headers = {};
+
+            if (candidate.requiresAuth) {
+                if (!token) {
+                    token = await context.adapter.credentials.getToken();
+                }
+                headers['Authorization'] = `Bearer ${token}`;
+            }
+
+            const response = await axios.get(candidate.url, {
+                headers,
+                responseType: 'arraybuffer'
+            });
+
+            return {
+                buffer: Buffer.from(response.data),
+                contentType: response.headers['content-type'] || null,
+                contentLength: Number(response.headers['content-length']) || null,
+                source: candidate.label
+            };
+        } catch (error) {
+            lastError = error;
+            const status = error.response?.status;
+            console.warn(`[Teams] Download attempt failed (${candidate.label || candidate.url}): ${status || error.message}`);
+        }
+    }
+
+    console.error('[Teams] Error downloading attachment:', lastError?.message || 'Unknown error');
+    throw lastError || new Error('Unable to download attachment');
 }
 
 /**
@@ -651,42 +778,54 @@ async function handleTeamsMessage(context) {
     let mapping = conversationMap.get(teamsConvId);
 
     try {
+        const trimmedMessageText = typeof activity.text === 'string' ? activity.text.trim() : '';
+        const hasTextContent = trimmedMessageText.length > 0;
+
         // Process attachments
         const freshchatAttachments = [];
+        const failedAttachmentNames = [];
         if (activity.attachments && activity.attachments.length > 0) {
             console.log(`[Teams] Processing ${activity.attachments.length} attachment(s)...`);
 
             for (const attachment of activity.attachments) {
                 try {
-                    console.log(`[Teams] Attachment: ${attachment.name} (${attachment.contentType})`);
-                    const isImage = attachment.contentType && attachment.contentType.startsWith('image/');
+                    const attachmentName = extractAttachmentName(attachment);
+                    const sanitizedName = sanitizeFilename(attachmentName);
+                    const normalizedContentType = extractAttachmentContentType(attachment);
+                    const attachmentLabel = sanitizedName || attachmentName || 'unnamed-attachment';
 
-                    // Download file from Teams
-                    const fileBuffer = await downloadTeamsAttachment(context, attachment);
+                    console.log(`[Teams] Attachment: ${attachmentLabel} (${normalizedContentType || 'unknown'})`);
+
+                    const downloadResult = await downloadTeamsAttachment(context, attachment);
+                    const resolvedContentType = downloadResult.contentType
+                        || normalizedContentType
+                        || 'application/octet-stream';
+                    const isImage = resolvedContentType.toLowerCase().startsWith('image/');
+                    const storedFilename = buildStoredFilename(attachmentName, resolvedContentType);
+                    const storagePath = path.join(UPLOADS_DIR, storedFilename);
+                    const effectiveName = sanitizedName || storedFilename;
 
                     if (isImage) {
                         // For images, save locally and create a public URL
                         if (!PUBLIC_URL) {
                             throw new Error('PUBLIC_URL environment variable is not set. Cannot serve images.');
                         }
-                        const filename = `${Date.now()}-${attachment.name.replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-                        const filepath = path.join(UPLOADS_DIR, filename);
-                        fs.writeFileSync(filepath, fileBuffer);
+                        fs.writeFileSync(storagePath, downloadResult.buffer);
 
-                        const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${filename}`;
+                        const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${storedFilename}`;
                         freshchatAttachments.push({
                             url: publicUrl,
-                            content_type: attachment.contentType,
-                            name: attachment.name
+                            content_type: resolvedContentType,
+                            name: effectiveName
                         });
                         console.log(`[Teams → Freshchat] Image served at: ${publicUrl}`);
 
                     } else {
                         // For other files, upload to Freshchat and use file_hash
                         const uploadedFile = await freshchatClient.uploadFile(
-                            fileBuffer,
-                            attachment.name,
-                            attachment.contentType
+                            downloadResult.buffer,
+                            effectiveName,
+                            resolvedContentType
                         );
 
                         console.log('[Teams → Freshchat] File upload response:', {
@@ -698,24 +837,36 @@ async function handleTeamsMessage(context) {
                         });
 
                         freshchatAttachments.push({
-                            name: uploadedFile.file_name || attachment.name,
-                            file_size_in_bytes: uploadedFile.file_size || fileBuffer.length,
-                            content_type: uploadedFile.file_content_type || attachment.contentType,
+                            name: uploadedFile.file_name || attachmentName || effectiveName,
+                            file_size_in_bytes: uploadedFile.file_size || downloadResult.contentLength || downloadResult.buffer.length,
+                            content_type: uploadedFile.file_content_type || resolvedContentType,
                             file_hash: uploadedFile.file_hash
                         });
-                        console.log(`[Teams → Freshchat] File prepared for send: ${attachment.name}, hash: ${uploadedFile.file_hash}`);
+                        console.log(`[Teams → Freshchat] File prepared for send: ${effectiveName}, hash: ${uploadedFile.file_hash}`);
                     }
                 } catch (error) {
-                    console.error(`[Teams] Failed to process attachment ${attachment.name}:`, error.message);
+                    const attachmentName = extractAttachmentName(attachment) || 'unknown';
+                    console.error(`[Teams] Failed to process attachment ${attachmentName}:`, error.message);
+                    const failedName = sanitizeFilename(attachmentName) || attachmentName || 'unknown';
+                    failedAttachmentNames.push(failedName);
                 }
             }
         }
 
+        const hasAttachmentContent = freshchatAttachments.length > 0;
+
+        if (!hasTextContent && !hasAttachmentContent) {
+            const failureNotice = failedAttachmentNames.length > 0
+                ? `⚠️ 전송할 수 있는 첨부파일이 없어 Freshchat으로 전달하지 못했습니다: ${failedAttachmentNames.join(', ')}`
+                : '⚠️ 전달할 수 있는 내용이 없어 Freshchat으로 전송하지 않았습니다.';
+
+            await context.sendActivity(failureNotice);
+            return;
+        }
+
         if (!mapping) {
             // First message in this conversation - create new Freshchat conversation
-            const initialMessage = activity.text && activity.text.trim().length > 0
-                ? activity.text
-                : null;
+            const initialMessage = hasTextContent ? trimmedMessageText : null;
 
             const freshchatConv = await freshchatClient.createConversation(
                 activity.from.id,
@@ -787,7 +938,7 @@ async function handleTeamsMessage(context) {
                     await freshchatClient.sendMessage(
                         candidate.id,
                         mapping.freshchatUserId,
-                        activity.text,
+                        hasTextContent ? trimmedMessageText : '',
                         freshchatAttachments,
                         { hydrationConversationId: candidate.hydrationId }
                     );
@@ -803,24 +954,27 @@ async function handleTeamsMessage(context) {
                     const status = error.response?.status;
 
                     if (status === 404 && index < candidateConversations.length - 1) {
-                        console.warn(`[Freshchat] Conversation ${candidate.id} returned 404. Trying alternate identifier.`);
-                        continue;
-                    }
-
-                    throw error;
+                    console.warn(`[Freshchat] Conversation ${candidate.id} returned 404. Trying alternate identifier.`);
+                    continue;
                 }
-            }
 
-            if (!sendSucceeded) {
-                throw lastError || new Error('Failed to send message to Freshchat');
+                throw error;
             }
         }
 
-        // Acknowledge receipt
+        if (!sendSucceeded) {
+            throw lastError || new Error('Failed to send message to Freshchat');
+        }
+    }
+
+    // Acknowledge receipt
         const attachmentText = freshchatAttachments.length > 0
             ? ` (${freshchatAttachments.length} file(s))`
             : '';
         await context.sendActivity(`✓ Message forwarded to Freshchat${attachmentText}`);
+        if (failedAttachmentNames.length > 0) {
+            await context.sendActivity(`⚠️ 전송하지 못한 첨부파일: ${failedAttachmentNames.join(', ')}`);
+        }
     } catch (error) {
         console.error('[Error] Failed to forward message to Freshchat:', error);
         await context.sendActivity('❌ Failed to forward message to Freshchat. Please check logs.');
