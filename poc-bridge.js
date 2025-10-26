@@ -139,11 +139,15 @@ function resolveFreshchatConversationId(mapping) {
         return null;
     }
 
-    return mapping.freshchatConversationNumericId
-        ? String(mapping.freshchatConversationNumericId)
-        : mapping.freshchatConversationGuid
-            ? String(mapping.freshchatConversationGuid)
-            : null;
+    if (mapping.freshchatConversationGuid) {
+        return String(mapping.freshchatConversationGuid);
+    }
+
+    if (mapping.freshchatConversationNumericId) {
+        return String(mapping.freshchatConversationNumericId);
+    }
+
+    return null;
 }
 
 function buildFreshchatMessageParts(message, attachments = []) {
@@ -396,7 +400,7 @@ class FreshchatClient {
     /**
      * Send a message to an existing Freshchat conversation
      */
-    async sendMessage(conversationId, userId, message, attachments = []) {
+    async sendMessage(conversationId, userId, message, attachments = [], options = {}) {
         try {
             if (!conversationId) {
                 throw new Error('Freshchat conversation ID is required to send a message');
@@ -430,8 +434,9 @@ class FreshchatClient {
             console.log(`[Freshchat] Message sent successfully, Message ID: ${response.data.id}`);
 
             // 메시지 전송 후 실제 파일 URL을 얻기 위해 메시지 조회
-            if (attachments.length > 0 && /^[0-9]+$/.test(String(conversationId))) {
-                const detailedMessage = await this.getMessageWithRetry(conversationId, response.data.id, response.data.created_time);
+            const hydrationConversationId = options?.hydrationConversationId || conversationId;
+            if (attachments.length > 0 && hydrationConversationId && /^[0-9]+$/.test(String(hydrationConversationId))) {
+                const detailedMessage = await this.getMessageWithRetry(hydrationConversationId, response.data.id, response.data.created_time);
                 if (detailedMessage) {
                     console.log('[Freshchat] Message details:', JSON.stringify(detailedMessage, null, 2));
                 } else {
@@ -733,19 +738,71 @@ async function handleTeamsMessage(context) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
             }
         } else {
-            const targetConversationId = resolveFreshchatConversationId(mapping);
+            const candidateConversations = [];
+            const guidConversationId = mapping.freshchatConversationGuid
+                ? String(mapping.freshchatConversationGuid)
+                : null;
+            const numericConversationId = mapping.freshchatConversationNumericId
+                ? String(mapping.freshchatConversationNumericId)
+                : null;
 
-            if (!targetConversationId) {
+            if (guidConversationId) {
+                candidateConversations.push({
+                    id: guidConversationId,
+                    hydrationId: numericConversationId || guidConversationId,
+                    label: 'guid'
+                });
+            }
+
+            if (numericConversationId && !candidateConversations.some((candidate) => candidate.id === numericConversationId)) {
+                candidateConversations.push({
+                    id: numericConversationId,
+                    hydrationId: numericConversationId,
+                    label: 'numeric'
+                });
+            }
+
+            if (candidateConversations.length === 0) {
                 throw new Error('Freshchat conversation ID unavailable for message transfer');
             }
 
-            // Existing conversation - send message to Freshchat
-            await freshchatClient.sendMessage(
-                targetConversationId,
-                mapping.freshchatUserId,
-                activity.text,
-                freshchatAttachments
-            );
+            let sendSucceeded = false;
+            let lastError = null;
+
+            for (let index = 0; index < candidateConversations.length; index += 1) {
+                const candidate = candidateConversations[index];
+
+                try {
+                    await freshchatClient.sendMessage(
+                        candidate.id,
+                        mapping.freshchatUserId,
+                        activity.text,
+                        freshchatAttachments,
+                        { hydrationConversationId: candidate.hydrationId }
+                    );
+
+                    if (index > 0) {
+                        console.log(`[Freshchat] Message sent using fallback conversation identifier (${candidate.label}): ${candidate.id}`);
+                    }
+
+                    sendSucceeded = true;
+                    break;
+                } catch (error) {
+                    lastError = error;
+                    const status = error.response?.status;
+
+                    if (status === 404 && index < candidateConversations.length - 1) {
+                        console.warn(`[Freshchat] Conversation ${candidate.id} returned 404. Trying alternate identifier.`);
+                        continue;
+                    }
+
+                    throw error;
+                }
+            }
+
+            if (!sendSucceeded) {
+                throw lastError || new Error('Failed to send message to Freshchat');
+            }
         }
 
         // Acknowledge receipt
