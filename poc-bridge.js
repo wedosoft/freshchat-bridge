@@ -812,7 +812,7 @@ async function handleTeamsMessage(context) {
 
     try {
         const trimmedMessageText = typeof activity.text === 'string' ? activity.text.trim() : '';
-        const hasTextContent = trimmedMessageText.length > 0;
+        let messageText = trimmedMessageText;
 
         // Process attachments
         const freshchatAttachments = [];
@@ -892,6 +892,20 @@ async function handleTeamsMessage(context) {
 
         const hasAttachmentContent = freshchatAttachments.length > 0;
 
+        const nonImageAttachmentNames = freshchatAttachments
+            .filter((attachment) => attachment.file_hash && (attachment.name || attachment.file_name))
+            .map((attachment) => attachment.name || attachment.file_name || '첨부파일');
+
+        if (nonImageAttachmentNames.length > 0) {
+            const bulletList = nonImageAttachmentNames.map((name) => `• ${name}`).join('\n');
+            const summaryBlock = `첨부파일:\n${bulletList}`;
+            messageText = messageText
+                ? `${messageText}\n\n${summaryBlock}`
+                : summaryBlock;
+        }
+
+        const hasTextContent = messageText.length > 0;
+
         if (!hasTextContent && !hasAttachmentContent) {
             const failureNotice = failedAttachmentNames.length > 0
                 ? `⚠️ 전송할 수 있는 첨부파일이 없어 Freshchat으로 전달하지 못했습니다: ${failedAttachmentNames.join(', ')}`
@@ -903,7 +917,7 @@ async function handleTeamsMessage(context) {
 
         if (!mapping) {
             // First message in this conversation - create new Freshchat conversation
-            const initialMessage = hasTextContent ? trimmedMessageText : null;
+            const initialMessage = hasTextContent ? messageText : null;
 
             const freshchatConv = await freshchatClient.createConversation(
                 activity.from.id,
@@ -975,7 +989,7 @@ async function handleTeamsMessage(context) {
                     await freshchatClient.sendMessage(
                         candidate.id,
                         mapping.freshchatUserId,
-                        hasTextContent ? trimmedMessageText : '',
+                        hasTextContent ? messageText : '',
                         freshchatAttachments,
                         { hydrationConversationId: candidate.hydrationId }
                     );
