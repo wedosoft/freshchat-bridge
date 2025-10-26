@@ -268,6 +268,35 @@ function buildStoredFilename(preferredName, contentType) {
     return `${timestamp}-${sanitized}${extension}`;
 }
 
+class SkippableAttachmentError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'SkippableAttachmentError';
+    }
+}
+
+function isSkippableTeamsAttachment(contentType) {
+    if (!contentType) {
+        return false;
+    }
+
+    const normalized = contentType.toLowerCase();
+    if (normalized === 'text/html' || normalized === 'text/plain') {
+        return true;
+    }
+
+    if (normalized.startsWith('application/vnd.microsoft.card')) {
+        return true;
+    }
+
+    const explicitSkips = new Set([
+        'application/vnd.microsoft.teams.card.o365connector',
+        'application/vnd.microsoft.teams.card.o365connectorfilepreview'
+    ]);
+
+    return explicitSkips.has(normalized);
+}
+
 // ============================================================================
 // Bot Framework Setup
 // ============================================================================
@@ -687,8 +716,9 @@ function verifyFreshchatSignature(payload, signature) {
 /**
  * Download file from Teams
  */
-async function downloadTeamsAttachment(context, attachment) {
+async function downloadTeamsAttachment(context, attachment, normalizedContentType) {
     const candidates = [];
+    const effectiveContentType = (normalizedContentType || extractAttachmentContentType(attachment) || '').toLowerCase();
 
     if (attachment?.contentUrl && typeof attachment.contentUrl === 'string') {
         candidates.push({
@@ -719,6 +749,9 @@ async function downloadTeamsAttachment(context, attachment) {
     }
 
     if (candidates.length === 0) {
+        if (isSkippableTeamsAttachment(effectiveContentType)) {
+            throw new SkippableAttachmentError('Attachment does not expose downloadable content');
+        }
         throw new Error('Attachment does not include a downloadable URL');
     }
 
@@ -788,15 +821,15 @@ async function handleTeamsMessage(context) {
             console.log(`[Teams] Processing ${activity.attachments.length} attachment(s)...`);
 
             for (const attachment of activity.attachments) {
-                try {
-                    const attachmentName = extractAttachmentName(attachment);
-                    const sanitizedName = sanitizeFilename(attachmentName);
-                    const normalizedContentType = extractAttachmentContentType(attachment);
-                    const attachmentLabel = sanitizedName || attachmentName || 'unnamed-attachment';
+                const attachmentName = extractAttachmentName(attachment);
+                const sanitizedName = sanitizeFilename(attachmentName);
+                const normalizedContentType = extractAttachmentContentType(attachment);
+                const attachmentLabel = sanitizedName || attachmentName || 'unnamed-attachment';
 
+                try {
                     console.log(`[Teams] Attachment: ${attachmentLabel} (${normalizedContentType || 'unknown'})`);
 
-                    const downloadResult = await downloadTeamsAttachment(context, attachment);
+                    const downloadResult = await downloadTeamsAttachment(context, attachment, normalizedContentType);
                     const resolvedContentType = downloadResult.contentType
                         || normalizedContentType
                         || 'application/octet-stream';
@@ -845,9 +878,13 @@ async function handleTeamsMessage(context) {
                         console.log(`[Teams → Freshchat] File prepared for send: ${effectiveName}, hash: ${uploadedFile.file_hash}`);
                     }
                 } catch (error) {
-                    const attachmentName = extractAttachmentName(attachment) || 'unknown';
-                    console.error(`[Teams] Failed to process attachment ${attachmentName}:`, error.message);
-                    const failedName = sanitizeFilename(attachmentName) || attachmentName || 'unknown';
+                    if (error instanceof SkippableAttachmentError) {
+                        console.log(`[Teams] Skipping non-downloadable attachment ${attachmentLabel}: ${error.message}`);
+                        continue;
+                    }
+
+                    console.error(`[Teams] Failed to process attachment ${attachmentLabel}:`, error.message);
+                    const failedName = attachmentLabel || sanitizeFilename(attachmentLabel) || 'unknown';
                     failedAttachmentNames.push(failedName);
                 }
             }
