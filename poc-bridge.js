@@ -31,6 +31,7 @@ const FRESHCHAT_API_KEY = process.env.FRESHCHAT_API_KEY;
 const FRESHCHAT_API_URL = process.env.FRESHCHAT_API_URL;
 const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
+const FRESHCHAT_WEBHOOK_SIGNATURE_STRICT = process.env.FRESHCHAT_WEBHOOK_SIGNATURE_STRICT !== 'false';
 const PUBLIC_URL = process.env.PUBLIC_URL;
 
 // ============================================================================
@@ -664,19 +665,49 @@ function verifyFreshchatSignature(payload, signature) {
         console.log('[Security] Public Key Length:', publicKey.length);
         console.log('[Security] Public Key:\n', publicKey);
         console.log('[Security] Signature:', signature);
-        console.log('[Security] Payload Length:', payload.length);
+        const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+        console.log('[Security] Payload Length:', payloadBuffer.length);
 
-        const verifier = crypto.createVerify('RSA-SHA256');
-        verifier.update(payload, 'utf8');
-        verifier.end();
+        let isValid = false;
+        let verificationMethod = null;
 
-        const signatureBuffer = Buffer.from(signature, 'base64');
-        const isValid = verifier.verify(publicKey, signatureBuffer);
+        try {
+            const verifier = crypto.createVerify('RSA-SHA256');
+            verifier.update(payloadBuffer);
+            verifier.end();
+
+            const signatureBuffer = Buffer.from(signature, 'base64');
+            isValid = verifier.verify(publicKey, signatureBuffer);
+            if (isValid) {
+                verificationMethod = 'native';
+            }
+        } catch (nativeError) {
+            console.warn('[Security] Native crypto verification threw an error:', nativeError.message);
+        }
 
         if (!isValid) {
-            console.warn('[Security] Webhook signature verification failed');
+            try {
+                const key = new NodeRSA();
+                try {
+                    key.importKey(publicKey, 'pkcs1-public-pem');
+                } catch (e1) {
+                    key.importKey(publicKey, 'pkcs8-public-pem');
+                }
+                key.setOptions({ signingScheme: 'pkcs1-sha256' });
+                isValid = key.verify(payloadBuffer, signature, 'buffer', 'base64');
+                if (isValid) {
+                    verificationMethod = 'node-rsa';
+                }
+            } catch (rsaError) {
+                console.warn('[Security] NodeRSA verification failed:', rsaError.message);
+            }
+        }
+
+        if (isValid) {
+            const methodLabel = verificationMethod === 'native' ? 'native crypto' : 'NodeRSA fallback';
+            console.log(`[Security] ✅ Signature verified successfully (${methodLabel})`);
         } else {
-            console.log('[Security] ✅ Signature verified successfully');
+            console.warn('[Security] Webhook signature verification failed');
         }
 
         return isValid;
@@ -1102,12 +1133,16 @@ app.post('/freshchat/webhook', async (req, res) => {
             ? req.rawBody
             : JSON.stringify(req.body);
         
-        if (!verifyFreshchatSignature(rawPayload, signature)) {
+        const signatureValid = verifyFreshchatSignature(rawPayload, signature);
+        if (!signatureValid) {
             console.error('[Security] Webhook signature verification failed');
-            return res.status(401).json({ error: 'Invalid signature' });
+            if (FRESHCHAT_WEBHOOK_SIGNATURE_STRICT) {
+                return res.status(401).json({ error: 'Invalid signature' });
+            }
+            console.warn('[Security] Proceeding despite invalid signature because FRESHCHAT_WEBHOOK_SIGNATURE_STRICT=false');
+        } else {
+            console.log('[Security] Webhook signature verified ✓');
         }
-
-        console.log('[Security] Webhook signature verified ✓');
 
         const { data, action } = req.body;
 
