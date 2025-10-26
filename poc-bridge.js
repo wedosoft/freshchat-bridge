@@ -666,34 +666,12 @@ function verifyFreshchatSignature(payload, signature) {
         console.log('[Security] Signature:', signature);
         console.log('[Security] Payload Length:', payload.length);
 
-        const key = new NodeRSA();
+        const verifier = crypto.createVerify('RSA-SHA256');
+        verifier.update(payload, 'utf8');
+        verifier.end();
 
-        // Try different import formats
-        try {
-            key.importKey(publicKey, 'pkcs1-public-pem');
-            console.log('[Security] Successfully imported key as pkcs1-public-pem');
-        } catch (e1) {
-            console.log('[Security] pkcs1-public-pem import failed (expected for PKCS#8 keys). Retrying with pkcs8-public-pem.');
-            try {
-                key.importKey(publicKey, 'pkcs8-public-pem');
-                console.log('[Security] Successfully imported key as pkcs8-public-pem');
-            } catch (e2) {
-                console.log('[Security] pkcs8-public-pem import failed, falling back to generic public format.');
-                key.importKey(publicKey, 'public');
-                console.log('[Security] Successfully imported key as public');
-            }
-        }
-
-        key.setOptions({
-            signingScheme: 'pkcs1-sha256'
-        });
-
-        const isValid = key.verify(
-            Buffer.from(payload),
-            signature,
-            'buffer',
-            'base64'
-        );
+        const signatureBuffer = Buffer.from(signature, 'base64');
+        const isValid = verifier.verify(publicKey, signatureBuffer);
 
         if (!isValid) {
             console.warn('[Security] Webhook signature verification failed');
@@ -704,7 +682,9 @@ function verifyFreshchatSignature(payload, signature) {
         return isValid;
     } catch (error) {
         console.error('[Security] Error verifying webhook signature:', error.message);
-        console.error('[Security] Error stack:', error.stack);
+        if (error.stack) {
+            console.error('[Security] Error stack:', error.stack);
+        }
         return false;
     }
 }
