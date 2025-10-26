@@ -167,10 +167,16 @@ function buildFreshchatMessageParts(message, attachments = []) {
         }
 
         if (attachment.url) {
+            const imagePayload = {
+                url: attachment.url
+            };
+
+            if (attachment.content_type) {
+                imagePayload.content_type = attachment.content_type;
+            }
+
             messageParts.push({
-                image: {
-                    url: attachment.url
-                }
+                image: imagePayload
             });
         } else if (attachment.file_hash) {
             messageParts.push({
@@ -574,6 +580,10 @@ function verifyFreshchatSignature(payload, signature) {
             }
         }
 
+        key.setOptions({
+            signingScheme: 'pkcs1-sha256'
+        });
+
         const isValid = key.verify(
             Buffer.from(payload),
             signature,
@@ -666,7 +676,8 @@ async function handleTeamsMessage(context) {
                         const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${filename}`;
                         freshchatAttachments.push({
                             url: publicUrl,
-                            content_type: attachment.contentType
+                            content_type: attachment.contentType,
+                            name: attachment.name
                         });
                         console.log(`[Teams → Freshchat] Image served at: ${publicUrl}`);
 
@@ -821,7 +832,12 @@ async function handleTeamsMessage(context) {
 // ============================================================================
 
 const app = express();
-app.use(express.json());
+app.use(express.json({
+    verify: (req, res, buf, encoding) => {
+        const encodingType = encoding || 'utf8';
+        req.rawBody = buf?.length ? buf.toString(encodingType) : '';
+    }
+}));
 app.use('/files', express.static(UPLOADS_DIR));
 
 // Allow Azure portal and Bot Framework service to access bot endpoints during testing
@@ -897,7 +913,9 @@ app.post('/freshchat/webhook', async (req, res) => {
 
         // Verify webhook signature
         const signature = req.headers['x-freshchat-signature'];
-        const rawPayload = JSON.stringify(req.body);
+        const rawPayload = typeof req.rawBody === 'string' && req.rawBody.length > 0
+            ? req.rawBody
+            : JSON.stringify(req.body);
         
         if (!verifyFreshchatSignature(rawPayload, signature)) {
             console.error('[Security] Webhook signature verification failed');
