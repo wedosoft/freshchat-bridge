@@ -840,23 +840,43 @@ function verifyFreshchatSignature(payload, signature) {
     }
 
     try {
-        // Normalize public key: handle both actual newlines and spaces between PEM sections
-        let publicKey = FRESHCHAT_WEBHOOK_PUBLIC_KEY;
-        
-        // First replace literal \n with actual newlines (for .env file format)
-        publicKey = publicKey.replace(/\\n/g, '\n');
-        
-        // If key is all on one line with spaces (Fly.io format), convert to proper PEM format
-        if (!publicKey.includes('\n') && publicKey.includes('-----BEGIN') && publicKey.includes('-----END')) {
-            publicKey = publicKey
-                .replace(/-----BEGIN RSA PUBLIC KEY-----\s*/i, '-----BEGIN RSA PUBLIC KEY-----\n')
-                .replace(/\s*-----END RSA PUBLIC KEY-----/i, '\n-----END RSA PUBLIC KEY-----');
-        }
+        // Normalize public key: handle common single-line / escaped formats and ensure
+        // base64 content is chunked into 64-char lines between PEM headers.
+        let publicKey = FRESHCHAT_WEBHOOK_PUBLIC_KEY || '';
 
-        // PKCS#1 (RSA PUBLIC KEY) → PKCS#8 (PUBLIC KEY) 변환
-        // Node.js crypto 모듈은 PKCS#8 형식을 기대하므로 변환 필요
+        // Replace literal "\\n" sequences (common when storing PEM in env vars)
+        publicKey = publicKey.replace(/\\n/g, '\n').trim();
+
+        // If the PEM content appears to be one long line (Fly.io sometimes stores
+        // PEM blocks without newlines), reformat the base64 body into 64-char lines.
+        const ensurePemFormatting = (pem) => {
+            if (!pem || !pem.includes('-----BEGIN') || !pem.includes('-----END')) {
+                return pem;
+            }
+
+            // Identify header/footer and body
+            const headerMatch = pem.match(/-----BEGIN[^-]+-----/i);
+            const footerMatch = pem.match(/-----END[^-]+-----/i);
+            if (!headerMatch || !footerMatch) return pem;
+
+            const header = headerMatch[0];
+            const footer = footerMatch[0];
+
+            // Extract what's between header and footer
+            const between = pem.substring(pem.indexOf(header) + header.length, pem.indexOf(footer)).replace(/[^A-Za-z0-9+/=]/g, '');
+            if (!between) return pem;
+
+            // Chunk into 64-char lines
+            const chunks = between.match(/.{1,64}/g) || [];
+            return `${header}\n${chunks.join('\n')}\n${footer}`;
+        };
+
+        publicKey = ensurePemFormatting(publicKey);
+
+        // Try converting PKCS#1 (BEGIN RSA PUBLIC KEY) -> PKCS#8 if needed. Keep
+        // a fallback to original if conversion fails.
         let pkcs8PublicKey = publicKey;
-        if (publicKey.includes('BEGIN RSA PUBLIC KEY')) {
+        if (/-----BEGIN RSA PUBLIC KEY-----/i.test(publicKey)) {
             try {
                 const rsaKey = new NodeRSA();
                 rsaKey.importKey(publicKey, 'pkcs1-public-pem');
@@ -864,7 +884,8 @@ function verifyFreshchatSignature(payload, signature) {
                 console.log('[Security] Converted PKCS#1 to PKCS#8 format');
             } catch (conversionError) {
                 console.warn('[Security] Failed to convert key format:', conversionError.message);
-                pkcs8PublicKey = publicKey; // fallback to original
+                // fallback to formatted original publicKey
+                pkcs8PublicKey = publicKey;
             }
         }
 
@@ -883,6 +904,7 @@ function verifyFreshchatSignature(payload, signature) {
             verifier.end();
 
             const signatureBuffer = Buffer.from(signature, 'base64');
+            // Try verifying with PKCS#8 formatted key first (most likely to succeed)
             isValid = verifier.verify(pkcs8PublicKey, signatureBuffer);
             if (isValid) {
                 verificationMethod = 'native';
@@ -894,10 +916,16 @@ function verifyFreshchatSignature(payload, signature) {
         if (!isValid) {
             try {
                 const key = new NodeRSA();
+                // Try importing as PKCS#8 first, then PKCS#1 as fallback
                 try {
-                    key.importKey(publicKey, 'pkcs1-public-pem');
+                    key.importKey(pkcs8PublicKey, 'pkcs8-public-pem');
                 } catch (e1) {
-                    key.importKey(publicKey, 'pkcs8-public-pem');
+                    try {
+                        key.importKey(publicKey, 'pkcs1-public-pem');
+                    } catch (e2) {
+                        // rethrow original import error
+                        throw e2 || e1;
+                    }
                 }
                 key.setOptions({ signingScheme: 'pkcs1-sha256' });
                 isValid = key.verify(payloadBuffer, signature, 'buffer', 'base64');
@@ -981,9 +1009,41 @@ async function downloadTeamsAttachment(context, attachment, normalizedContentTyp
 
             if (candidate.requiresAuth) {
                 if (!token) {
-                    token = await context.adapter.credentials.getToken();
+                    // Try to obtain a usable token from a few possible sources.
+                    try {
+                        token = await context.adapter.credentials.getToken();
+                    } catch (e) {
+                        // ignore - try fallback
+                    }
+
+                    // token might be an object with different property names depending on library/version
+                    if (token && typeof token === 'object') {
+                        token = token.token || token.accessToken || token.access_token || token.value || token;
+                    }
+
+                    // Fallback: try to create a connector client and use its credentials
+                    if (!token) {
+                        try {
+                            const connectorClient = await context.adapter.createConnectorClient(context.activity.serviceUrl);
+                            if (connectorClient && connectorClient.credentials && typeof connectorClient.credentials.getToken === 'function') {
+                                let ctoken = await connectorClient.credentials.getToken();
+                                if (ctoken && typeof ctoken === 'object') {
+                                    ctoken = ctoken.token || ctoken.accessToken || ctoken.access_token || ctoken.value || ctoken;
+                                }
+                                token = token || ctoken;
+                            }
+                        } catch (e) {
+                            // ignore fallback failure
+                        }
+                    }
                 }
-                headers['Authorization'] = `Bearer ${token}`;
+
+                if (token) {
+                    headers['Authorization'] = `Bearer ${token}`;
+                }
+                // Helpful headers that some Teams endpoints expect
+                headers['User-Agent'] = headers['User-Agent'] || 'Microsoft-BotFramework/3.0 (Node)';
+                headers['Accept'] = headers['Accept'] || '*/*';
             }
 
             const response = await axios.get(candidate.url, {
@@ -1593,6 +1653,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                 .filter(Boolean);
 
             const attachmentLinks = [];
+            const fileCards = [];
             const downloadFailures = [];
 
             if (attachmentParts.length > 0) {
@@ -1616,13 +1677,57 @@ app.post('/freshchat/webhook', async (req, res) => {
 
                             const isImage = (fileData.contentType || attachment.contentType || '').startsWith('image/');
                             const displayName = attachment.name || fileData.filename || '파일';
+                            const fileSize = fileData.buffer.length;
+                            const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
                             if (isImage) {
                                 // Embed images using Markdown
                                 attachmentLinks.push(`![${displayName}](${publicUrl})`);
                             } else {
-                                // Provide a download link for other files
-                                attachmentLinks.push(`[${displayName} 다운로드](${publicUrl})`);
+                                // Create Adaptive Card for file attachment
+                                const card = CardFactory.adaptiveCard({
+                                    type: 'AdaptiveCard',
+                                    version: '1.4',
+                                    body: [
+                                        {
+                                            type: 'ColumnSet',
+                                            columns: [
+                                                {
+                                                    type: 'Column',
+                                                    width: 'auto',
+                                                    items: [
+                                                        {
+                                                            type: 'Image',
+                                                            url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/PDF_file_icon.svg/195px-PDF_file_icon.svg.png',
+                                                            size: 'Small',
+                                                            width: '40px'
+                                                        }
+                                                    ]
+                                                },
+                                                {
+                                                    type: 'Column',
+                                                    width: 'stretch',
+                                                    items: [
+                                                        {
+                                                            type: 'TextBlock',
+                                                            text: displayName,
+                                                            weight: 'Bolder',
+                                                            size: 'Medium',
+                                                            wrap: true
+                                                        },
+                                                        {
+                                                            type: 'TextBlock',
+                                                            text: `${fileSizeMB} MB | [다운로드](${publicUrl})`,
+                                                            isSubtle: true,
+                                                            spacing: 'None'
+                                                        }
+                                                    ]
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                });
+                                fileCards.push(card);
                             }
                         } catch (downloadError) {
                             downloadFailures.push(attachment.name || '알 수 없는 파일');
@@ -1637,7 +1742,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                 messageText = messageText ? `${messageText}\n\n${downloadWarning}` : downloadWarning;
             }
 
-            if (!messageText && attachmentLinks.length === 0) {
+            if (!messageText && attachmentLinks.length === 0 && fileCards.length === 0) {
                 console.log('[Freshchat] No content found in message');
                 return res.sendStatus(200);
             }
@@ -1658,7 +1763,17 @@ app.post('/freshchat/webhook', async (req, res) => {
                         composedText += `\n\n${attachmentLinks.join('\n')}`;
                     }
 
-                    await turnContext.sendActivity(composedText);
+                    // Send text message first
+                    if (composedText !== `**${actorLabel}:**`) {
+                        await turnContext.sendActivity(composedText);
+                    }
+
+                    // Send file cards separately
+                    if (fileCards.length > 0) {
+                        for (const card of fileCards) {
+                            await turnContext.sendActivity({ attachments: [card] });
+                        }
+                    }
                 }
             );
 
