@@ -853,8 +853,23 @@ function verifyFreshchatSignature(payload, signature) {
                 .replace(/\s*-----END RSA PUBLIC KEY-----/i, '\n-----END RSA PUBLIC KEY-----');
         }
 
-        console.log('[Security] Public Key Length:', publicKey.length);
-        console.log('[Security] Public Key:\n', publicKey);
+        // PKCS#1 (RSA PUBLIC KEY) → PKCS#8 (PUBLIC KEY) 변환
+        // Node.js crypto 모듈은 PKCS#8 형식을 기대하므로 변환 필요
+        let pkcs8PublicKey = publicKey;
+        if (publicKey.includes('BEGIN RSA PUBLIC KEY')) {
+            try {
+                const rsaKey = new NodeRSA();
+                rsaKey.importKey(publicKey, 'pkcs1-public-pem');
+                pkcs8PublicKey = rsaKey.exportKey('pkcs8-public-pem');
+                console.log('[Security] Converted PKCS#1 to PKCS#8 format');
+            } catch (conversionError) {
+                console.warn('[Security] Failed to convert key format:', conversionError.message);
+                pkcs8PublicKey = publicKey; // fallback to original
+            }
+        }
+
+        console.log('[Security] Public Key Length:', pkcs8PublicKey.length);
+        console.log('[Security] Public Key:\n', pkcs8PublicKey);
         console.log('[Security] Signature:', signature);
         const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
         console.log('[Security] Payload Length:', payloadBuffer.length);
@@ -868,7 +883,7 @@ function verifyFreshchatSignature(payload, signature) {
             verifier.end();
 
             const signatureBuffer = Buffer.from(signature, 'base64');
-            isValid = verifier.verify(publicKey, signatureBuffer);
+            isValid = verifier.verify(pkcs8PublicKey, signatureBuffer);
             if (isValid) {
                 verificationMethod = 'native';
             }
@@ -1124,18 +1139,7 @@ async function handleTeamsMessage(context) {
 
         const hasAttachmentContent = freshchatAttachments.length > 0;
 
-        const nonImageAttachmentNames = freshchatAttachments
-            .filter((attachment) => (attachment.fileHash || attachment.file_hash || attachment.fileId || attachment.file_id) && (attachment.name || attachment.file_name))
-            .map((attachment) => attachment.name || attachment.file_name || '첨부파일');
-
-        if (nonImageAttachmentNames.length > 0) {
-            const bulletList = nonImageAttachmentNames.map((name) => `• ${name}`).join('\n');
-            const summaryBlock = `첨부파일:\n${bulletList}`;
-            messageText = messageText
-                ? `${messageText}\n\n${summaryBlock}`
-                : summaryBlock;
-        }
-
+        // 첨부파일은 Freshchat의 file part로 전달되므로 텍스트 요약 불필요
         const hasTextContent = messageText.length > 0;
 
         if (!hasTextContent && !hasAttachmentContent) {
