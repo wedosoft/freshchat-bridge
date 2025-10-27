@@ -1129,7 +1129,7 @@ async function handleTeamsMessage(context) {
             .map((attachment) => attachment.name || attachment.file_name || '첨부파일');
 
         if (nonImageAttachmentNames.length > 0) {
-            const bulletList = nonImageAttachmentNames.map((name) => `• \`${name}\``).join('\n');
+            const bulletList = nonImageAttachmentNames.map((name) => `• ${name}`).join('\n');
             const summaryBlock = `첨부파일:\n${bulletList}`;
             messageText = messageText
                 ? `${messageText}\n\n${summaryBlock}`
