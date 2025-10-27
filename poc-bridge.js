@@ -1122,11 +1122,7 @@ async function handleTeamsMessage(context) {
         }
     }
 
-    // Acknowledge receipt
-        const attachmentText = freshchatAttachments.length > 0
-            ? ` (${freshchatAttachments.length} file(s))`
-            : '';
-        await context.sendActivity(`✓ Message forwarded to Freshchat${attachmentText}`);
+    // Acknowledge only when attachments failed to send
         if (failedAttachmentNames.length > 0) {
             await context.sendActivity(`⚠️ 전송하지 못한 첨부파일: ${failedAttachmentNames.join(', ')}`);
         }
