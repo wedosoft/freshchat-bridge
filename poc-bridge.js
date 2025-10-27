@@ -873,22 +873,105 @@ function verifyFreshchatSignature(payload, signature) {
 
         publicKey = ensurePemFormatting(publicKey);
 
-        // Try converting PKCS#1 (BEGIN RSA PUBLIC KEY) -> PKCS#8 if needed. Keep
-        // a fallback to original if conversion fails.
+        const extractDerBuffer = (pem) => {
+            const match = pem.match(/-----BEGIN [^-]+-----([\s\S]+?)-----END [^-]+-----/);
+            if (!match) {
+                return null;
+            }
+            const base64 = match[1].replace(/[^A-Za-z0-9+/=]/g, '');
+            if (!base64) {
+                return null;
+            }
+            try {
+                return Buffer.from(base64, 'base64');
+            } catch (error) {
+                console.warn('[Security] Failed to decode PEM body:', error.message);
+                return null;
+            }
+        };
+
+        const detectDerStructure = (pem) => {
+            const der = extractDerBuffer(pem);
+            if (!der || der.length < 4) {
+                return null;
+            }
+
+            let offset = 2;
+            if (der[1] & 0x80) {
+                const lenBytes = der[1] & 0x7f;
+                if (lenBytes === 0 || lenBytes > 4 || 2 + lenBytes >= der.length) {
+                    return null;
+                }
+                offset = 2 + lenBytes;
+            }
+
+            const tag = der[offset];
+            if (tag === 0x02) {
+                return 'pkcs1';
+            }
+
+            if (tag === 0x30) {
+                const rsaOid = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01]);
+                if (der.indexOf(rsaOid, offset) !== -1) {
+                    return 'spki';
+                }
+            }
+
+            return null;
+        };
+
+        const relabelPem = (pem, newLabel) => pem
+            .replace(/-----BEGIN [^-]+-----/i, `-----BEGIN ${newLabel}-----`)
+            .replace(/-----END [^-]+-----/i, `-----END ${newLabel}-----`);
+
+        const headerMatch = publicKey.match(/-----BEGIN\s+([^-]+?)-----/i);
+        let headerLabel = headerMatch ? headerMatch[1].trim().toUpperCase() : null;
+        const detectedStructure = detectDerStructure(publicKey);
+
+        if (detectedStructure === 'spki' && headerLabel === 'RSA PUBLIC KEY') {
+            publicKey = relabelPem(publicKey, 'PUBLIC KEY');
+            headerLabel = 'PUBLIC KEY';
+            console.log('[Security] Adjusted PEM header from RSA PUBLIC KEY → PUBLIC KEY (detected SPKI structure)');
+        } else if (detectedStructure === 'pkcs1' && headerLabel === 'PUBLIC KEY') {
+            publicKey = relabelPem(publicKey, 'RSA PUBLIC KEY');
+            headerLabel = 'RSA PUBLIC KEY';
+            console.log('[Security] Adjusted PEM header from PUBLIC KEY → RSA PUBLIC KEY (detected PKCS#1 structure)');
+        }
+
+        // Try converting PKCS#1 (BEGIN RSA PUBLIC KEY) -> PKCS#8 using native crypto
+        // for best compatibility. Fall back to NodeRSA only if native conversion fails.
         let pkcs8PublicKey = publicKey;
         if (/-----BEGIN RSA PUBLIC KEY-----/i.test(publicKey)) {
+            let converted = null;
             try {
-                const rsaKey = new NodeRSA();
-                rsaKey.importKey(publicKey, 'pkcs1-public-pem');
-                pkcs8PublicKey = rsaKey.exportKey('pkcs8-public-pem');
-                console.log('[Security] Converted PKCS#1 to PKCS#8 format');
-            } catch (conversionError) {
-                console.warn('[Security] Failed to convert key format:', conversionError.message);
-                // fallback to formatted original publicKey
-                pkcs8PublicKey = publicKey;
+                const keyObject = crypto.createPublicKey({
+                    key: publicKey,
+                    format: 'pem',
+                    type: 'pkcs1'
+                });
+                converted = keyObject.export({
+                    format: 'pem',
+                    type: 'spki'
+                });
+                pkcs8PublicKey = converted;
+                console.log('[Security] Converted PKCS#1 to PKCS#8 using native crypto');
+            } catch (nativeConversionError) {
+                console.warn('[Security] Native conversion failed, trying NodeRSA:', nativeConversionError.message);
+                try {
+                    const rsaKey = new NodeRSA();
+                    rsaKey.importKey(publicKey, 'pkcs1-public-pem');
+                    converted = rsaKey.exportKey('pkcs8-public-pem');
+                    pkcs8PublicKey = converted;
+                    console.log('[Security] Converted PKCS#1 to PKCS#8 using NodeRSA fallback');
+                } catch (nodeRsaConversionError) {
+                    console.warn('[Security] NodeRSA conversion also failed:', nodeRsaConversionError.message);
+                    pkcs8PublicKey = publicKey; // fallback to formatted original publicKey
+                }
             }
         }
 
+        console.log('[Security] PEM header label:', headerLabel || 'unknown');
+        console.log('[Security] Detected DER structure:', detectedStructure || 'unknown');
         console.log('[Security] Public Key Length:', pkcs8PublicKey.length);
         console.log('[Security] Public Key:\n', pkcs8PublicKey);
         console.log('[Security] Signature:', signature);
@@ -923,7 +1006,6 @@ function verifyFreshchatSignature(payload, signature) {
                     try {
                         key.importKey(publicKey, 'pkcs1-public-pem');
                     } catch (e2) {
-                        // rethrow original import error
                         throw e2 || e1;
                     }
                 }
