@@ -179,14 +179,31 @@ function buildFreshchatMessageParts(message, attachments = []) {
             messageParts.push({
                 image: imagePayload
             });
-        } else if (attachment.file_hash) {
+        } else if (attachment.file_hash || attachment.file_id) {
+            const filePayload = {
+                name: attachment.name,
+                content_type: attachment.content_type
+            };
+
+            if (attachment.file_size_in_bytes !== undefined) {
+                filePayload.file_size_in_bytes = attachment.file_size_in_bytes;
+            }
+
+            if (attachment.file_hash) {
+                filePayload.file_hash = attachment.file_hash;
+            }
+
+            if (attachment.file_id) {
+                filePayload.file_id = attachment.file_id;
+            }
+
             messageParts.push({
-                file: {
-                    name: attachment.name,
-                    content_type: attachment.content_type,
-                    file_size_in_bytes: attachment.file_size_in_bytes,
-                    file_hash: attachment.file_hash
-                }
+                file: filePayload
+            });
+        } else {
+            console.warn('[Freshchat] Skipping attachment without file identifier', {
+                name: attachment.name,
+                keys: Object.keys(attachment)
             });
         }
     }
@@ -267,6 +284,57 @@ function buildStoredFilename(preferredName, contentType) {
     }
 
     return `${timestamp}-${sanitized}${extension}`;
+}
+
+/**
+ * Normalize the varying Freshchat upload API response into a stable shape.
+ */
+function normalizeFreshchatUploadResponse(uploadedFile, fallback = {}) {
+    if (!uploadedFile || typeof uploadedFile !== 'object') {
+        throw new Error('Freshchat upload response is empty or invalid');
+    }
+
+    const fallbackName = fallback.name || 'attachment';
+    const fallbackContentType = fallback.contentType || 'application/octet-stream';
+    const fallbackSize = typeof fallback.fileSize === 'number' ? fallback.fileSize : Number(fallback.fileSize);
+
+    const normalized = {
+        fileHash: uploadedFile.file_hash || uploadedFile.fileHash || null,
+        fileId: uploadedFile.file_id || uploadedFile.fileId || null,
+        contentType: uploadedFile.file_content_type
+            || uploadedFile.content_type
+            || uploadedFile.contentType
+            || fallbackContentType,
+        name: uploadedFile.file_name
+            || uploadedFile.filename
+            || uploadedFile.name
+            || fallbackName,
+        downloadUrl: typeof uploadedFile.download_url === 'string'
+            ? uploadedFile.download_url
+            : typeof uploadedFile.file_url === 'string'
+                ? uploadedFile.file_url
+                : typeof uploadedFile.url === 'string'
+                    ? uploadedFile.url
+                    : undefined
+    };
+
+    const sizeCandidate = uploadedFile.file_size ?? uploadedFile.fileSize ?? fallbackSize;
+    const numericSize = Number(sizeCandidate);
+    if (Number.isFinite(numericSize) && numericSize > 0) {
+        normalized.fileSize = numericSize;
+    } else if (Number.isFinite(fallbackSize) && fallbackSize > 0) {
+        normalized.fileSize = fallbackSize;
+    }
+
+    if (!normalized.name) {
+        normalized.name = fallbackName;
+    }
+
+    if (!normalized.contentType) {
+        normalized.contentType = fallbackContentType;
+    }
+
+    return normalized;
 }
 
 class SkippableAttachmentError extends Error {
@@ -872,21 +940,46 @@ async function handleTeamsMessage(context) {
                             resolvedContentType
                         );
 
-                        console.log('[Teams → Freshchat] File upload response:', {
-                            name: uploadedFile?.file_name,
-                            size: uploadedFile?.file_size,
-                            contentType: uploadedFile?.file_content_type,
-                            hash: uploadedFile?.file_hash,
-                            raw: uploadedFile
+                        const fallbackSize = downloadResult.contentLength || downloadResult.buffer.length;
+                        const normalizedUpload = normalizeFreshchatUploadResponse(uploadedFile, {
+                            name: effectiveName,
+                            contentType: resolvedContentType,
+                            fileSize: fallbackSize
                         });
 
-                        freshchatAttachments.push({
-                            name: uploadedFile.file_name || attachmentName || effectiveName,
-                            file_size_in_bytes: uploadedFile.file_size || downloadResult.contentLength || downloadResult.buffer.length,
-                            content_type: uploadedFile.file_content_type || resolvedContentType,
-                            file_hash: uploadedFile.file_hash
+                        console.log('[Teams → Freshchat] File upload response (normalized):', {
+                            name: normalizedUpload.name,
+                            size: normalizedUpload.fileSize,
+                            contentType: normalizedUpload.contentType,
+                            fileHash: normalizedUpload.fileHash,
+                            fileId: normalizedUpload.fileId,
+                            downloadUrl: normalizedUpload.downloadUrl
                         });
-                        console.log(`[Teams → Freshchat] File prepared for send: ${effectiveName}, hash: ${uploadedFile.file_hash}`);
+
+                        const fileAttachmentPayload = {
+                            name: normalizedUpload.name,
+                            file_size_in_bytes: normalizedUpload.fileSize || fallbackSize,
+                            content_type: normalizedUpload.contentType
+                        };
+
+                        if (normalizedUpload.fileHash) {
+                            fileAttachmentPayload.file_hash = normalizedUpload.fileHash;
+                        }
+
+                        if (normalizedUpload.fileId) {
+                            fileAttachmentPayload.file_id = normalizedUpload.fileId;
+                        }
+
+                        if (!fileAttachmentPayload.file_hash && !fileAttachmentPayload.file_id) {
+                            console.warn('[Teams → Freshchat] Uploaded file missing file_hash and file_id. Freshchat may skip the attachment.');
+                        }
+
+                        freshchatAttachments.push(fileAttachmentPayload);
+                        console.log('[Teams → Freshchat] File prepared for send:', {
+                            name: fileAttachmentPayload.name,
+                            hash: fileAttachmentPayload.file_hash,
+                            id: fileAttachmentPayload.file_id
+                        });
                     }
                 } catch (error) {
                     if (error instanceof SkippableAttachmentError) {
@@ -904,11 +997,11 @@ async function handleTeamsMessage(context) {
         const hasAttachmentContent = freshchatAttachments.length > 0;
 
         const nonImageAttachmentNames = freshchatAttachments
-            .filter((attachment) => attachment.file_hash && (attachment.name || attachment.file_name))
+            .filter((attachment) => (attachment.file_hash || attachment.file_id) && (attachment.name || attachment.file_name))
             .map((attachment) => attachment.name || attachment.file_name || '첨부파일');
 
         if (nonImageAttachmentNames.length > 0) {
-            const bulletList = nonImageAttachmentNames.map((name) => `• ${name}`).join('\n');
+            const bulletList = nonImageAttachmentNames.map((name) => `• \`${name}\``).join('\n');
             const summaryBlock = `첨부파일:\n${bulletList}`;
             messageText = messageText
                 ? `${messageText}\n\n${summaryBlock}`
