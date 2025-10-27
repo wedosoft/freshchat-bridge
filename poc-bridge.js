@@ -172,42 +172,57 @@ function buildFreshchatMessageParts(message, attachments = []) {
                 url: attachment.url
             };
 
-            if (attachment.content_type) {
-                imagePayload.content_type = attachment.content_type;
+            const contentType = attachment.contentType || attachment.content_type;
+            if (contentType) {
+                imagePayload.contentType = contentType;
+                imagePayload.content_type = contentType;
             }
 
             messageParts.push({
                 image: imagePayload
             });
-        } else if (attachment.file_hash || attachment.file_id) {
+        } else {
+            const contentType = attachment.contentType || attachment.content_type;
+            const fileHash = attachment.fileHash || attachment.file_hash || attachment.hash;
+            const fileId = attachment.fileId || attachment.file_id;
+            const sizeCandidate = attachment.file_size_in_bytes ?? attachment.fileSize;
+            const numericSize = Number(sizeCandidate);
+            const validSize = Number.isFinite(numericSize) && numericSize > 0 ? numericSize : undefined;
+            const safeName = attachment.name || attachment.file_name || 'attachment';
+
+            if (!fileHash && !fileId) {
+                console.warn('[Freshchat] Skipping attachment without file identifier', {
+                    name: attachment.name,
+                    keys: Object.keys(attachment)
+                });
+                continue;
+            }
+
             const filePayload = {
-                name: attachment.name,
-                content_type: attachment.content_type
+                name: safeName
             };
 
-            if (attachment.file_size_in_bytes !== undefined) {
-                filePayload.file_size_in_bytes = attachment.file_size_in_bytes;
+            if (validSize) {
+                filePayload.file_size_in_bytes = validSize;
             }
 
-            if (attachment.file_hash) {
-                filePayload.file_hash = attachment.file_hash;
+            if (contentType) {
+                filePayload.contentType = contentType;
+                filePayload.content_type = contentType;
             }
 
-            if (attachment.file_id) {
-                filePayload.file_id = attachment.file_id;
+            if (fileHash) {
+                filePayload.fileHash = fileHash;
+                filePayload.file_hash = fileHash;
             }
 
-            if (attachment.hash) {
-                filePayload.hash = attachment.hash;
+            if (fileId) {
+                filePayload.fileId = fileId;
+                filePayload.file_id = fileId;
             }
 
             messageParts.push({
                 file: filePayload
-            });
-        } else {
-            console.warn('[Freshchat] Skipping attachment without file identifier', {
-                name: attachment.name,
-                keys: Object.keys(attachment)
             });
         }
     }
@@ -298,31 +313,68 @@ function normalizeFreshchatUploadResponse(uploadedFile, fallback = {}) {
         throw new Error('Freshchat upload response is empty or invalid');
     }
 
+    const payload = (() => {
+        if (uploadedFile.file && typeof uploadedFile.file === 'object') {
+            return uploadedFile.file;
+        }
+        if (uploadedFile.data && typeof uploadedFile.data === 'object') {
+            return uploadedFile.data;
+        }
+        return uploadedFile;
+    })();
+
     const fallbackName = fallback.name || 'attachment';
     const fallbackContentType = fallback.contentType || 'application/octet-stream';
     const fallbackSize = typeof fallback.fileSize === 'number' ? fallback.fileSize : Number(fallback.fileSize);
 
+    const firstNonEmptyString = (...candidates) => candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+
     const normalized = {
-        fileHash: uploadedFile.file_hash || uploadedFile.fileHash || null,
-        fileId: uploadedFile.file_id || uploadedFile.fileId || null,
-        contentType: uploadedFile.file_content_type
-            || uploadedFile.content_type
-            || uploadedFile.contentType
-            || fallbackContentType,
-        name: uploadedFile.file_name
-            || uploadedFile.filename
-            || uploadedFile.name
-            || fallbackName,
-        downloadUrl: typeof uploadedFile.download_url === 'string'
-            ? uploadedFile.download_url
-            : typeof uploadedFile.file_url === 'string'
-                ? uploadedFile.file_url
-                : typeof uploadedFile.url === 'string'
-                    ? uploadedFile.url
-                    : undefined
+        fileHash: firstNonEmptyString(
+            payload.fileHash,
+            payload.file_hash,
+            payload.hash,
+            uploadedFile.fileHash,
+            uploadedFile.file_hash,
+            uploadedFile.hash
+        ) || null,
+        fileId: firstNonEmptyString(
+            payload.fileId,
+            payload.file_id,
+            uploadedFile.fileId,
+            uploadedFile.file_id
+        ) || null,
+        contentType: firstNonEmptyString(
+            payload.file_content_type,
+            payload.content_type,
+            payload.contentType,
+            uploadedFile.file_content_type,
+            uploadedFile.content_type,
+            uploadedFile.contentType
+        ) || fallbackContentType,
+        name: firstNonEmptyString(
+            payload.file_name,
+            payload.filename,
+            payload.name,
+            uploadedFile.file_name,
+            uploadedFile.filename,
+            uploadedFile.name
+        ) || fallbackName,
+        downloadUrl: firstNonEmptyString(
+            payload.download_url,
+            payload.file_url,
+            payload.url,
+            uploadedFile.download_url,
+            uploadedFile.file_url,
+            uploadedFile.url
+        )
     };
 
-    const sizeCandidate = uploadedFile.file_size ?? uploadedFile.fileSize ?? fallbackSize;
+    const sizeCandidate = payload.file_size
+        ?? payload.fileSize
+        ?? uploadedFile.file_size
+        ?? uploadedFile.fileSize
+        ?? fallbackSize;
     const numericSize = Number(sizeCandidate);
     if (Number.isFinite(numericSize) && numericSize > 0) {
         normalized.fileSize = numericSize;
@@ -545,7 +597,21 @@ class FreshchatClient {
     /**
      * Retry fetching message details so Freshchat has time to attach download URLs
      */
-    async getMessageWithRetry(conversationId, messageId, createdTime, maxAttempts = 3) {
+    async getMessageWithRetry(conversationIds, messageId, createdTime, maxAttempts = 3) {
+        const candidateIds = Array.isArray(conversationIds)
+            ? conversationIds
+            : [conversationIds];
+
+        const identifiers = Array.from(new Set(
+            candidateIds
+                .map((id) => (id === null || id === undefined ? '' : String(id).trim()))
+                .filter((id) => id.length > 0)
+        ));
+
+        if (identifiers.length === 0) {
+            return null;
+        }
+
         let attempt = 0;
         let lastError = null;
         let fallbackMessage = null;
@@ -553,19 +619,44 @@ class FreshchatClient {
         while (attempt < maxAttempts) {
             attempt += 1;
 
-            try {
-                const message = await this.getMessageFromConversation(conversationId, messageId, {
-                    fromTime: attempt === 1 ? createdTime : undefined
-                });
+            for (const conversationId of identifiers) {
+                try {
+                    const message = await this.getMessageFromConversation(conversationId, messageId, {
+                        fromTime: attempt === 1 ? createdTime : undefined
+                    });
 
-                if (message) {
-                    if (message.message_parts?.some((part) => part.file?.url)) {
+                    if (!message) {
+                        continue;
+                    }
+
+                    const hasDownloadablePart = message.message_parts?.some((part) => {
+                        return Boolean(
+                            part?.file?.url
+                            || part?.file?.download_url
+                            || part?.image?.url
+                            || part?.image?.download_url
+                            || part?.video?.url
+                            || part?.video?.download_url
+                        );
+                    });
+
+                    if (hasDownloadablePart) {
                         return message;
                     }
+
                     fallbackMessage = message;
+                } catch (error) {
+                    lastError = error;
+                    const status = error.response?.status;
+                    if (status === 400 || status === 404) {
+                        continue;
+                    }
+                    throw error;
                 }
-            } catch (error) {
-                lastError = error;
+            }
+
+            if (fallbackMessage) {
+                break;
             }
 
             if (attempt < maxAttempts) {
@@ -574,7 +665,12 @@ class FreshchatClient {
         }
 
         if (lastError) {
-            console.error(`[Freshchat] Failed to hydrate message ${messageId}:`, lastError.response?.data || lastError.message);
+            console.error(
+                `[Freshchat] Failed to hydrate message ${messageId} using identifiers [${identifiers.join(', ')}]:`,
+                lastError.response?.data || lastError.message
+            );
+        } else if (!fallbackMessage) {
+            console.warn(`[Freshchat] Unable to hydrate message ${messageId} using identifiers [${identifiers.join(', ')}]`);
         }
 
         return fallbackMessage;
@@ -597,8 +693,9 @@ class FreshchatClient {
                 attachmentsCount: attachments.length,
                 attachmentsSummary: attachments.map((part) => ({
                     keys: Object.keys(part),
-                    contentType: part.content_type,
-                    hash: part.hash || part.file_hash || part.file_id,
+                    contentType: part.contentType || part.content_type,
+                    fileHash: part.fileHash || part.file_hash,
+                    fileId: part.fileId || part.file_id,
                     url: part.url
                 }))
             });
@@ -617,16 +714,28 @@ class FreshchatClient {
             console.log(`[Freshchat] Message sent successfully, Message ID: ${response.data.id}`);
 
             // 메시지 전송 후 실제 파일 URL을 얻기 위해 메시지 조회
-            const hydrationConversationId = options?.hydrationConversationId || conversationId;
-            if (attachments.length > 0 && hydrationConversationId && /^[0-9]+$/.test(String(hydrationConversationId))) {
-                const detailedMessage = await this.getMessageWithRetry(hydrationConversationId, response.data.id, response.data.created_time);
+            const hydrationCandidates = (() => {
+                if (Array.isArray(options?.hydrationConversationIds)) {
+                    return options.hydrationConversationIds;
+                }
+                if (options?.hydrationConversationId) {
+                    return [options.hydrationConversationId];
+                }
+                return [conversationId];
+            })();
+
+            if (attachments.length > 0) {
+                const detailedMessage = await this.getMessageWithRetry(
+                    hydrationCandidates,
+                    response.data.id,
+                    response.data.created_time
+                );
+
                 if (detailedMessage) {
                     console.log('[Freshchat] Message details:', JSON.stringify(detailedMessage, null, 2));
                 } else {
                     console.warn('[Freshchat] Unable to fetch message details for attachment logging');
                 }
-            } else if (attachments.length > 0) {
-                console.log('[Freshchat] Skipping attachment hydration until numeric conversation ID is available');
             }
 
             return response.data;
@@ -931,6 +1040,7 @@ async function handleTeamsMessage(context) {
                         const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${storedFilename}`;
                         freshchatAttachments.push({
                             url: publicUrl,
+                            contentType: resolvedContentType,
                             content_type: resolvedContentType,
                             name: effectiveName
                         });
@@ -963,32 +1073,30 @@ async function handleTeamsMessage(context) {
                         const fileAttachmentPayload = {
                             name: normalizedUpload.name,
                             file_size_in_bytes: normalizedUpload.fileSize || fallbackSize,
+                            contentType: normalizedUpload.contentType,
                             content_type: normalizedUpload.contentType
                         };
 
                         if (normalizedUpload.fileHash) {
+                            fileAttachmentPayload.fileHash = normalizedUpload.fileHash;
                             fileAttachmentPayload.file_hash = normalizedUpload.fileHash;
                         }
 
                         if (normalizedUpload.fileId) {
+                            fileAttachmentPayload.fileId = normalizedUpload.fileId;
                             fileAttachmentPayload.file_id = normalizedUpload.fileId;
                         }
 
-                        const identifier = fileAttachmentPayload.file_hash || fileAttachmentPayload.file_id;
-                        if (identifier) {
-                            fileAttachmentPayload.hash = identifier;
-                        }
-
-                        if (!fileAttachmentPayload.file_hash && !fileAttachmentPayload.file_id) {
-                            console.warn('[Teams → Freshchat] Uploaded file missing file_hash and file_id. Freshchat may skip the attachment.');
+                        if (!fileAttachmentPayload.fileHash && !fileAttachmentPayload.fileId) {
+                            console.warn('[Teams → Freshchat] Uploaded file missing fileHash and fileId. Freshchat may skip the attachment.');
                         }
 
                         freshchatAttachments.push(fileAttachmentPayload);
                         console.log('[Teams → Freshchat] File prepared for send:', {
                             name: fileAttachmentPayload.name,
-                            hash: fileAttachmentPayload.hash,
-                            legacyHash: fileAttachmentPayload.file_hash,
-                            id: fileAttachmentPayload.file_id
+                            fileHash: fileAttachmentPayload.fileHash,
+                            fileId: fileAttachmentPayload.fileId,
+                            contentType: fileAttachmentPayload.contentType
                         });
                     }
                 } catch (error) {
@@ -1007,7 +1115,7 @@ async function handleTeamsMessage(context) {
         const hasAttachmentContent = freshchatAttachments.length > 0;
 
         const nonImageAttachmentNames = freshchatAttachments
-            .filter((attachment) => (attachment.file_hash || attachment.file_id) && (attachment.name || attachment.file_name))
+            .filter((attachment) => (attachment.fileHash || attachment.file_hash || attachment.fileId || attachment.file_id) && (attachment.name || attachment.file_name))
             .map((attachment) => attachment.name || attachment.file_name || '첨부파일');
 
         if (nonImageAttachmentNames.length > 0) {
@@ -1072,11 +1180,14 @@ async function handleTeamsMessage(context) {
             const numericConversationId = mapping.freshchatConversationNumericId
                 ? String(mapping.freshchatConversationNumericId)
                 : null;
+            const hydrationConversationIds = Array.from(new Set(
+                [numericConversationId, guidConversationId]
+                    .filter(Boolean)
+            ));
 
             if (guidConversationId) {
                 candidateConversations.push({
                     id: guidConversationId,
-                    hydrationId: numericConversationId || guidConversationId,
                     label: 'guid'
                 });
             }
@@ -1084,7 +1195,6 @@ async function handleTeamsMessage(context) {
             if (numericConversationId && !candidateConversations.some((candidate) => candidate.id === numericConversationId)) {
                 candidateConversations.push({
                     id: numericConversationId,
-                    hydrationId: numericConversationId,
                     label: 'numeric'
                 });
             }
@@ -1105,7 +1215,7 @@ async function handleTeamsMessage(context) {
                         mapping.freshchatUserId,
                         hasTextContent ? messageText : '',
                         freshchatAttachments,
-                        { hydrationConversationId: candidate.hydrationId }
+                        { hydrationConversationIds }
                     );
 
                     if (index > 0) {
@@ -1119,20 +1229,20 @@ async function handleTeamsMessage(context) {
                     const status = error.response?.status;
 
                     if (status === 404 && index < candidateConversations.length - 1) {
-                    console.warn(`[Freshchat] Conversation ${candidate.id} returned 404. Trying alternate identifier.`);
-                    continue;
-                }
+                        console.warn(`[Freshchat] Conversation ${candidate.id} returned 404. Trying alternate identifier.`);
+                        continue;
+                    }
 
-                throw error;
+                    throw error;
+                }
+            }
+
+            if (!sendSucceeded) {
+                throw lastError || new Error('Failed to send message to Freshchat');
             }
         }
 
-        if (!sendSucceeded) {
-            throw lastError || new Error('Failed to send message to Freshchat');
-        }
-    }
-
-    // Acknowledge only when attachments failed to send
+        // Acknowledge only when attachments failed to send
         if (failedAttachmentNames.length > 0) {
             await context.sendActivity(`⚠️ 전송하지 못한 첨부파일: ${failedAttachmentNames.join(', ')}`);
         }
@@ -1330,9 +1440,10 @@ app.post('/freshchat/webhook', async (req, res) => {
                     if (part.file) {
                         attachmentParts.push({
                             name: part.file.name,
-                            contentType: part.file.content_type || 'application/octet-stream',
-                            url: part.file.url,
-                            fileHash: part.file.file_hash
+                            contentType: part.file.content_type || part.file.contentType || 'application/octet-stream',
+                            url: part.file.url || part.file.download_url || part.file.downloadUrl,
+                            fileHash: part.file.file_hash || part.file.fileHash,
+                            fileId: part.file.file_id || part.file.fileId
                         });
                     }
 
@@ -1354,17 +1465,17 @@ app.post('/freshchat/webhook', async (req, res) => {
                         attachmentParts.push({
                             name: derivedName,
                             contentType: part.image.content_type || part.image.contentType || 'image/png',
-                            url: part.image.url,
-                            fileHash: part.image.file_hash
+                            url: part.image.url || part.image.download_url || part.image.downloadUrl,
+                            fileHash: part.image.file_hash || part.image.fileHash
                         });
                     }
 
                     if (part.video?.url) {
                         attachmentParts.push({
                             name: part.video.name || 'freshchat-video',
-                            contentType: part.video.content_type || 'video/mp4',
-                            url: part.video.url,
-                            fileHash: part.video.file_hash
+                            contentType: part.video.content_type || part.video.contentType || 'video/mp4',
+                            url: part.video.url || part.video.download_url || part.video.downloadUrl,
+                            fileHash: part.video.file_hash || part.video.fileHash
                         });
                     }
                 }
@@ -1374,7 +1485,7 @@ app.post('/freshchat/webhook', async (req, res) => {
             if (attachmentParts.length > 0) {
                 console.log('[Freshchat] Fetching message details for attachment hydration...');
                 const detailedMessage = await freshchatClient.getMessageWithRetry(
-                    freshchatConversationId,
+                    [freshchatConversationId, conversationGuid],
                     message.id,
                     message.created_time
                 );
@@ -1383,35 +1494,74 @@ app.post('/freshchat/webhook', async (req, res) => {
                     const detailIndex = new Map();
                     for (const part of detailedMessage.message_parts) {
                         if (part.file) {
-                            const key = part.file.file_hash || part.file.name;
-                            detailIndex.set(key, {
-                                url: part.file.download_url || part.file.url,
-                                contentType: part.file.content_type,
+                            const payload = {
+                                url: part.file.download_url
+                                    || part.file.downloadUrl
+                                    || part.file.file_url
+                                    || part.file.url,
+                                contentType: part.file.content_type || part.file.contentType,
                                 name: part.file.name
-                            });
+                            };
+
+                            const fileKeys = [
+                                part.file.file_hash,
+                                part.file.fileHash,
+                                part.file.file_id,
+                                part.file.fileId,
+                                part.file.name
+                            ].filter((value) => typeof value === 'string' && value.length > 0);
+
+                            for (const key of fileKeys) {
+                                detailIndex.set(key, payload);
+                            }
                         }
 
                         if (part.image) {
-                            const key = part.image.file_hash || part.image.name || part.image.url;
-                            detailIndex.set(key, {
-                                url: part.image.download_url || part.image.url,
-                                contentType: part.image.content_type,
+                            const payload = {
+                                url: part.image.download_url
+                                    || part.image.downloadUrl
+                                    || part.image.url,
+                                contentType: part.image.content_type || part.image.contentType,
                                 name: part.image.name
-                            });
+                            };
+
+                            const imageKeys = [
+                                part.image.file_hash,
+                                part.image.fileHash,
+                                part.image.name,
+                                part.image.url
+                            ].filter((value) => typeof value === 'string' && value.length > 0);
+
+                            for (const key of imageKeys) {
+                                detailIndex.set(key, payload);
+                            }
                         }
 
                         if (part.video) {
-                            const key = part.video.file_hash || part.video.name || part.video.url;
-                            detailIndex.set(key, {
-                                url: part.video.download_url || part.video.url,
-                                contentType: part.video.content_type,
+                            const payload = {
+                                url: part.video.download_url
+                                    || part.video.downloadUrl
+                                    || part.video.url,
+                                contentType: part.video.content_type || part.video.contentType,
                                 name: part.video.name
-                            });
+                            };
+
+                            const videoKeys = [
+                                part.video.file_hash,
+                                part.video.fileHash,
+                                part.video.name,
+                                part.video.url
+                            ].filter((value) => typeof value === 'string' && value.length > 0);
+
+                            for (const key of videoKeys) {
+                                detailIndex.set(key, payload);
+                            }
                         }
                     }
 
                     for (const attachment of attachmentParts) {
                         const match = detailIndex.get(attachment.fileHash)
+                            || detailIndex.get(attachment.fileId)
                             || detailIndex.get(attachment.name)
                             || detailIndex.get(attachment.url);
                         if (match) {
