@@ -197,6 +197,10 @@ function buildFreshchatMessageParts(message, attachments = []) {
                 filePayload.file_id = attachment.file_id;
             }
 
+            if (attachment.hash) {
+                filePayload.hash = attachment.hash;
+            }
+
             messageParts.push({
                 file: filePayload
             });
@@ -594,7 +598,7 @@ class FreshchatClient {
                 attachmentsSummary: attachments.map((part) => ({
                     keys: Object.keys(part),
                     contentType: part.content_type,
-                    hash: part.file_hash,
+                    hash: part.hash || part.file_hash || part.file_id,
                     url: part.url
                 }))
             });
@@ -970,6 +974,11 @@ async function handleTeamsMessage(context) {
                             fileAttachmentPayload.file_id = normalizedUpload.fileId;
                         }
 
+                        const identifier = fileAttachmentPayload.file_hash || fileAttachmentPayload.file_id;
+                        if (identifier) {
+                            fileAttachmentPayload.hash = identifier;
+                        }
+
                         if (!fileAttachmentPayload.file_hash && !fileAttachmentPayload.file_id) {
                             console.warn('[Teams → Freshchat] Uploaded file missing file_hash and file_id. Freshchat may skip the attachment.');
                         }
@@ -977,7 +986,8 @@ async function handleTeamsMessage(context) {
                         freshchatAttachments.push(fileAttachmentPayload);
                         console.log('[Teams → Freshchat] File prepared for send:', {
                             name: fileAttachmentPayload.name,
-                            hash: fileAttachmentPayload.file_hash,
+                            hash: fileAttachmentPayload.hash,
+                            legacyHash: fileAttachmentPayload.file_hash,
                             id: fileAttachmentPayload.file_id
                         });
                     }
