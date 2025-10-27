@@ -1723,7 +1723,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                         if (match) {
                             attachment.url = match.url || attachment.url;
                             attachment.contentType = match.contentType || attachment.contentType;
-                            attachment.name = attachment.name || match.name;
+                            attachment.name = match.name || attachment.name;
                         }
                     }
                 }
@@ -1761,6 +1761,24 @@ app.post('/freshchat/webhook', async (req, res) => {
                             const displayName = attachment.name || fileData.filename || '파일';
                             const fileSize = fileData.buffer.length;
                             const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+                            
+                            // Determine file icon based on content type
+                            const contentType = (fileData.contentType || attachment.contentType || '').toLowerCase();
+                            let fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3767/3767084.png'; // default file icon
+                            
+                            if (contentType.includes('pdf')) {
+                                fileIconUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/PDF_file_icon.svg/195px-PDF_file_icon.svg.png';
+                            } else if (contentType.includes('word') || contentType.includes('document')) {
+                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965350.png';
+                            } else if (contentType.includes('excel') || contentType.includes('spreadsheet')) {
+                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965383.png';
+                            } else if (contentType.includes('powerpoint') || contentType.includes('presentation')) {
+                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965416.png';
+                            } else if (contentType.includes('text')) {
+                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3767/3767084.png';
+                            } else if (contentType.includes('zip') || contentType.includes('compressed')) {
+                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3143/3143615.png';
+                            }
 
                             if (isImage) {
                                 // Embed images using Markdown
@@ -1780,7 +1798,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                                                     items: [
                                                         {
                                                             type: 'Image',
-                                                            url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/PDF_file_icon.svg/195px-PDF_file_icon.svg.png',
+                                                            url: fileIconUrl,
                                                             size: 'Small',
                                                             width: '40px'
                                                         }
