@@ -840,8 +840,18 @@ function verifyFreshchatSignature(payload, signature) {
     }
 
     try {
-        // Replace literal \n with actual newlines
-        const publicKey = FRESHCHAT_WEBHOOK_PUBLIC_KEY.replace(/\\n/g, '\n');
+        // Normalize public key: handle both actual newlines and spaces between PEM sections
+        let publicKey = FRESHCHAT_WEBHOOK_PUBLIC_KEY;
+        
+        // First replace literal \n with actual newlines (for .env file format)
+        publicKey = publicKey.replace(/\\n/g, '\n');
+        
+        // If key is all on one line with spaces (Fly.io format), convert to proper PEM format
+        if (!publicKey.includes('\n') && publicKey.includes('-----BEGIN') && publicKey.includes('-----END')) {
+            publicKey = publicKey
+                .replace(/-----BEGIN RSA PUBLIC KEY-----\s*/i, '-----BEGIN RSA PUBLIC KEY-----\n')
+                .replace(/\s*-----END RSA PUBLIC KEY-----/i, '\n-----END RSA PUBLIC KEY-----');
+        }
 
         console.log('[Security] Public Key Length:', publicKey.length);
         console.log('[Security] Public Key:\n', publicKey);
