@@ -545,6 +545,60 @@ class FreshchatClient {
     }
 
     /**
+     * Update Freshchat user with Teams conversation ID
+     */
+    async updateUserTeamsConversation(userId, teamsConversationId) {
+        try {
+            console.log(`[Freshchat] Updating user ${userId} with Teams conversation: ${teamsConversationId}`);
+            
+            await this.axiosInstance.put(`/users/${userId}`, {
+                properties: [
+                    {
+                        name: 'source',
+                        value: 'Microsoft Teams'
+                    },
+                    {
+                        name: 'teams_conversation_id',
+                        value: teamsConversationId
+                    },
+                    {
+                        name: 'teams_last_updated',
+                        value: new Date().toISOString()
+                    }
+                ]
+            });
+
+            console.log(`[Freshchat] ✅ User updated with Teams conversation ID`);
+        } catch (error) {
+            console.error(`[Freshchat] Failed to update user with Teams conversation:`, error.response?.data || error.message);
+        }
+    }
+
+    /**
+     * Get user's Teams conversation ID from Freshchat properties
+     */
+    async getUserTeamsConversation(userId) {
+        try {
+            const response = await this.axiosInstance.get(`/users/${userId}`);
+            const user = response.data;
+            
+            if (user.properties) {
+                const teamsConvProp = user.properties.find(p => p.name === 'teams_conversation_id');
+                if (teamsConvProp && teamsConvProp.value) {
+                    console.log(`[Freshchat] Found Teams conversation ID for user ${userId}: ${teamsConvProp.value}`);
+                    return teamsConvProp.value;
+                }
+            }
+            
+            console.log(`[Freshchat] No Teams conversation ID found for user ${userId}`);
+            return null;
+        } catch (error) {
+            console.error(`[Freshchat] Failed to get user Teams conversation:`, error.response?.data || error.message);
+            return null;
+        }
+    }
+
+    /**
      * Upload a file to Freshchat
      */
     async uploadFile(fileBuffer, filename, contentType) {
@@ -1325,6 +1379,9 @@ async function handleTeamsMessage(context) {
 
             console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${resolveFreshchatConversationId(mapping)})`);
 
+            // Store Teams conversation ID in Freshchat user properties for future lookups
+            await freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId);
+
             if (freshchatConversationGuid && !freshchatConversationNumericId) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
             }
@@ -1558,21 +1615,43 @@ app.post('/freshchat/webhook', async (req, res) => {
                 teamsConvId = reverseMap.get(conversationGuid);
             }
 
+            // If no mapping found in memory, try to get from Freshchat user properties
             if (!teamsConvId) {
-                console.log(`[Freshchat] No Teams mapping found for conversation: ${freshchatConversationId}`);
-                if (actorType !== 'agent' && actorType !== 'system' && actorType !== 'bot') {
-                    console.log('[Freshchat] Ignoring non-agent message without mapping');
-                    return res.sendStatus(200);
+                console.log(`[Freshchat] No Teams mapping found in memory for conversation: ${freshchatConversationId}`);
+                
+                // Get user ID from message
+                const freshchatUserId = message.user_id || data.user_id;
+                if (freshchatUserId) {
+                    console.log(`[Freshchat] Attempting to retrieve Teams conversation ID from user properties (user: ${freshchatUserId})`);
+                    teamsConvId = await freshchatClient.getUserTeamsConversation(freshchatUserId);
+                    
+                    if (teamsConvId) {
+                        console.log(`[Freshchat] ✅ Found Teams conversation ID from user properties: ${teamsConvId}`);
+                        // Restore mapping to memory for future use
+                        reverseMap.set(freshchatConversationId, teamsConvId);
+                        if (conversationGuid) {
+                            reverseMap.set(conversationGuid, teamsConvId);
+                        }
+                    }
                 }
+            }
+
+            if (!teamsConvId) {
+                console.log(`[Freshchat] ℹ️  No Teams mapping found for conversation: ${freshchatConversationId}`);
+                console.log(`[Freshchat] ℹ️  This conversation was likely started from a different channel (not Teams)`);
+                console.log(`[Freshchat] ℹ️  Actor type: ${actorType} - Skipping message forwarding to Teams`);
                 return res.sendStatus(200);
             }
 
             let mapping = conversationMap.get(teamsConvId);
             if (!mapping) {
-                console.log(`[Freshchat] Mapping data missing for: ${teamsConvId}`);
-                if (actorType !== 'agent' && actorType !== 'system' && actorType !== 'bot') {
-                    return res.sendStatus(200);
-                }
+                console.log(`[Freshchat] ⚠️  Mapping data missing for Teams conversation: ${teamsConvId}`);
+                console.log(`[Freshchat] ⚠️  Attempting to restore conversation reference...`);
+                
+                // We have teamsConvId but no full mapping - need to get conversation reference
+                // This can happen after server restart
+                // For now, we'll skip this message and wait for user to send a new message from Teams
+                console.log(`[Freshchat] ⚠️  Cannot send message without conversation reference. User needs to send a message from Teams first.`);
                 return res.sendStatus(200);
             }
 
