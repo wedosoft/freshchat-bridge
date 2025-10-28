@@ -1938,33 +1938,73 @@ app.post('/debug/reset', (req, res) => {
 // Server Start
 // ============================================================================
 
-app.listen(PORT, () => {
-    console.log('\n╔════════════════════════════════════════════════════════════╗');
-    console.log('║  Teams ↔ Freshchat Bridge (PoC) - Server Started          ║');
-    console.log('╚════════════════════════════════════════════════════════════╝\n');
-    console.log(`🚀 Server listening on port ${PORT}`);
-    console.log(`📍 Bot endpoint: http://localhost:${PORT}/bot/callback`);
-    console.log(`📍 Webhook endpoint: http://localhost:${PORT}/freshchat/webhook`);
-    console.log(`📍 Health check: http://localhost:${PORT}/`);
-    console.log(`📍 Debug mappings: http://localhost:${PORT}/debug/mappings`);
-    console.log('\n⚠️  Remember to:');
-    console.log('   1. Update Azure Bot messaging endpoint with your Fly.io URL');
-    console.log('   2. Configure Freshchat webhook with your Fly.io URL');
-    console.log('\n═══════════════════════════════════════════════════════════\n');
+const server = app.listen(PORT, () => {
+    const timestamp = new Date().toISOString();
+    console.log('\n\n');
+    console.log('╔════════════════════════════════════════════════════════════════════════╗');
+    console.log('║                                                                        ║');
+    console.log('║        🚀 Teams ↔ Freshchat Bridge Server - STARTED                   ║');
+    console.log('║                                                                        ║');
+    console.log('╚════════════════════════════════════════════════════════════════════════╝');
+    console.log('');
+    console.log(`⏰ Timestamp: ${timestamp}`);
+    console.log(`🌐 Port: ${PORT}`);
+    console.log(`� Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log('');
+    console.log('📍 Available Endpoints:');
+    console.log(`   • Bot callback:    http://localhost:${PORT}/bot/callback`);
+    console.log(`   • Webhook:         http://localhost:${PORT}/freshchat/webhook`);
+    console.log(`   • Health check:    http://localhost:${PORT}/`);
+    console.log(`   • Debug mappings:  http://localhost:${PORT}/debug/mappings`);
+    console.log('');
+    console.log('⚠️  Configuration Checklist:');
+    console.log('   ✓ Update Azure Bot messaging endpoint with Fly.io URL');
+    console.log('   ✓ Configure Freshchat webhook with Fly.io URL');
+    console.log('');
+    console.log('═══════════════════════════════════════════════════════════════════════');
+    console.log('');
 });
 
 // ============================================================================
 // Graceful Shutdown
 // ============================================================================
 
-process.on('SIGINT', () => {
-    console.log('\n\n[Shutdown] Received SIGINT, shutting down gracefully...');
-    console.log(`[Shutdown] Active mappings at shutdown: ${conversationMap.size}`);
-    process.exit(0);
-});
+const gracefulShutdown = (signal) => {
+    const timestamp = new Date().toISOString();
+    console.log('\n\n');
+    console.log('╔════════════════════════════════════════════════════════════════════════╗');
+    console.log('║                                                                        ║');
+    console.log('║        🛑 Teams ↔ Freshchat Bridge Server - SHUTTING DOWN             ║');
+    console.log('║                                                                        ║');
+    console.log('╚════════════════════════════════════════════════════════════════════════╝');
+    console.log('');
+    console.log(`⏰ Timestamp: ${timestamp}`);
+    console.log(`📡 Signal: ${signal}`);
+    console.log(`💾 Active conversation mappings: ${conversationMap.size}`);
+    console.log('');
+    
+    if (conversationMap.size > 0) {
+        console.log('📋 Active Conversations:');
+        for (const [teamsId, mapping] of conversationMap) {
+            console.log(`   • Teams: ${teamsId.substring(0, 20)}... ↔ Freshchat: ${mapping.freshchatConversationNumericId || mapping.freshchatConversationGuid}`);
+        }
+        console.log('');
+    }
+    
+    server.close(() => {
+        console.log('✅ Server closed successfully');
+        console.log('');
+        console.log('═══════════════════════════════════════════════════════════════════════');
+        console.log('');
+        process.exit(0);
+    });
+    
+    // Force shutdown after 10 seconds
+    setTimeout(() => {
+        console.error('⚠️  Force shutdown - server did not close gracefully within 10 seconds');
+        process.exit(1);
+    }, 10000);
+};
 
-process.on('SIGTERM', () => {
-    console.log('\n\n[Shutdown] Received SIGTERM, shutting down gracefully...');
-    console.log(`[Shutdown] Active mappings at shutdown: ${conversationMap.size}`);
-    process.exit(0);
-});
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
