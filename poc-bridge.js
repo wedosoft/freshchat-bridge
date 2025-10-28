@@ -1468,8 +1468,8 @@ const processBotRequest = async (req, res) => {
                 for (const member of context.activity.membersAdded) {
                     if (member.id !== context.activity.recipient.id) {
                         await context.sendActivity(
-                            '👋 Hello! I\'m the Teams-Freshchat bridge bot. ' +
-                            'Send me a message and I\'ll forward it to Freshchat!'
+                            '👋 안녕하세요! 고객지원팀입니다.\n' +
+                            '궁금하신 점이나 도움이 필요하신 사항을 메시지로 보내주시면 신속하게 답변드리겠습니다.'
                         );
                     }
                 }
