@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.1.6",
+  "version": "1.1.8",
   "id": "6a46afe9-3109-4af6-a0f9-275f6fddf929",
   "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
@@ -15,12 +15,12 @@
     "outline": "outline.png"
   },
   "name": {
-    "short": "Freshchat Bridge Bot",
-    "full": "Teams to Freshchat Bridge Bot"
+    "short": "IT 지원센터",
+    "full": "IT 지원센터 헬프데스크"
   },
   "description": {
-    "short": "Connect Teams conversations to Freshchat support",
-    "full": "This bot bridges Microsoft Teams conversations with Freshchat customer support platform, enabling seamless communication between Teams users and Freshchat agents."
+    "short": "IT 문제 해결이 필요하신가요?",
+    "full": "IT 지원센터와 바로 연결됩니다. 시스템 문제, 계정 문의, 기술 지원 등 IT 관련 도움이 필요하시면 언제든지 문의해 주세요."
   },
   "accentColor": "#FFFFFF",
   "bots": [
