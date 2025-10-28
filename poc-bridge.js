@@ -1851,7 +1851,7 @@ app.post('/freshchat/webhook', async (req, res) => {
             await adapter.continueConversation(
                 mapping.conversationReference,
                 async (turnContext) => {
-                    const actorLabelMap = { agent: 'Agent Reply', system: 'System Message', bot: 'Bot Message' };
+                    const actorLabelMap = { agent: '지원팀', system: 'System Message', bot: 'Bot Message' };
                     const actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
                     let composedText = `**${actorLabel}:**`;
 

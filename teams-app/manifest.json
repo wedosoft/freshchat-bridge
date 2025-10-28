@@ -1,11 +1,11 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.2.7",
+  "version": "0.1.5",
   "id": "6a46afe9-3109-4af6-a0f9-275f6fddf929",
   "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
-    "name": "We Do Soft",
+    "name": "We Do Soft Inc.",
     "websiteUrl": "https://wedosoft.net",
     "privacyUrl": "https://wedosoft.net/privacy",
     "termsOfUseUrl": "https://wedosoft.net/terms"
