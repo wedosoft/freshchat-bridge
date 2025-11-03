@@ -5,6 +5,9 @@ package-lock.json
 # Environment variables
 .env
 
+# Tenant configuration (contains sensitive data)
+tenants.json
+
 # Logs
 logs/
 *.log
