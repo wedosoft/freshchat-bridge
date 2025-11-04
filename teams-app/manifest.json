@@ -15,12 +15,12 @@
     "outline": "outline.png"
   },
   "name": {
-    "short": "IT 지원센터",
-    "full": "IT 지원센터 헬프데스크"
+    "short": "EXO헬프",
+    "full": "EXO헬프 고객지원"
   },
   "description": {
-    "short": "IT 문제 해결이 필요하신가요?",
-    "full": "IT 지원센터와 바로 연결됩니다. 시스템 문제, 계정 문의, 기술 지원 등 IT 관련 도움이 필요하시면 언제든지 문의해 주세요."
+    "short": "고객 문의 및 지원",
+    "full": "EXO헬프 고객지원 시스템입니다. 문의사항을 작성해주시면 담당자에게 자동으로 연결됩니다."
   },
   "accentColor": "#FFFFFF",
   "bots": [
