@@ -67,6 +67,13 @@ const reverseMap = new Map();
 const processedFreshchatMessages = new Map();
 const FRESHCHAT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+/**
+ * Cache for Teams user profiles to reduce Graph API calls
+ * Structure: { teamsUserId: { profile, timestamp } }
+ */
+const userProfileCache = new Map();
+const USER_PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 function cleanupProcessedFreshchatMessages() {
     const now = Date.now();
     for (const [messageId, timestamp] of processedFreshchatMessages.entries()) {
@@ -82,6 +89,13 @@ function cleanupProcessedFreshchatMessages() {
         const excess = processedFreshchatMessages.size - 2000;
         for (let i = 0; i < excess; i += 1) {
             processedFreshchatMessages.delete(sortedEntries[i][0]);
+        }
+    }
+
+    // Cleanup expired profile cache
+    for (const [userId, data] of userProfileCache.entries()) {
+        if (now - data.timestamp > USER_PROFILE_CACHE_TTL_MS) {
+            userProfileCache.delete(userId);
         }
     }
 }
@@ -1397,10 +1411,19 @@ async function downloadTeamsAttachment(context, attachment, normalizedContentTyp
  * Collect Teams user profile information using Graph API
  */
 async function collectTeamsUserProfile(context) {
+    const { activity } = context;
+    const userId = activity.from.id;
+
+    // Check cache first
+    const cached = userProfileCache.get(userId);
+    if (cached && (Date.now() - cached.timestamp) < USER_PROFILE_CACHE_TTL_MS) {
+        console.log('[Teams] Using cached profile for user:', userId);
+        return cached.profile;
+    }
+
     const userProfile = {};
 
     try {
-        const { activity } = context;
         if (activity.from.name) {
             userProfile.displayName = activity.from.name;
         }
@@ -1445,6 +1468,12 @@ async function collectTeamsUserProfile(context) {
         }
 
         console.log('[Teams] User profile collected:', JSON.stringify(userProfile, null, 2));
+        
+        // Cache the profile
+        userProfileCache.set(userId, {
+            profile: userProfile,
+            timestamp: Date.now()
+        });
     } catch (error) {
         console.error('[Teams] Error collecting user profile:', error.message);
     }
@@ -1669,8 +1698,9 @@ async function handleTeamsMessage(context) {
 
             console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${resolveFreshchatConversationId(mapping)})`);
 
-            // Store Teams conversation ID in Freshchat user properties for future lookups
-            await freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId);
+            // Store Teams conversation ID in Freshchat user properties (async, non-blocking)
+            freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId)
+                .catch(err => console.warn('[Freshchat] Background profile update failed:', err.message));
 
             if (freshchatConversationGuid && !freshchatConversationNumericId) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
