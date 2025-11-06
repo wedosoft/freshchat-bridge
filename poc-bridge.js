@@ -1404,7 +1404,8 @@ async function collectTeamsUserProfile(context) {
                         const graphProfile = await getGraphUserProfile(context, aadId);
                         
                         if (graphProfile) {
-                            console.log('[Graph] Extended profile retrieved');\n                            if (graphProfile.jobTitle) userProfile.jobTitle = graphProfile.jobTitle;
+                            console.log('[Graph] Extended profile retrieved');
+                            if (graphProfile.jobTitle) userProfile.jobTitle = graphProfile.jobTitle;
                             if (graphProfile.department) userProfile.department = graphProfile.department;
                             if (graphProfile.mobilePhone) userProfile.mobilePhone = graphProfile.mobilePhone;
                             if (graphProfile.officeLocation) userProfile.officeLocation = graphProfile.officeLocation;
