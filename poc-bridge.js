@@ -1523,7 +1523,8 @@ const processBotRequest = async (req, res) => {
         } else if (context.activity.type === 'conversationUpdate') {
             if (context.activity.membersAdded) {
                 for (const member of context.activity.membersAdded) {
-                    if (member.id !== context.activity.recipient.id) {
+                    if (member.id === context.activity.recipient.id) {
+                        // Bot was added to the conversation
                         await context.sendActivity(
                             '안녕하세요. EXO헬프 입니다. 문의사항을 작성해주시면, 담당자에게 자동으로 연결됩니다.'
                         );
