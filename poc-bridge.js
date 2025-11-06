@@ -16,6 +16,8 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
+const { Client } = require('@microsoft/microsoft-graph-client');
+require('isomorphic-fetch');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -493,6 +495,15 @@ class FreshchatClient {
             return name;
         } catch (error) {
             console.error(`[Freshchat] Failed to fetch agent ${agentId}:`, error.response?.data || error.message);
+            
+            // Cache failures with shorter TTL to prevent repeated failed requests
+            this.agentCache.set(agentId, { 
+                name: '지원팀', 
+                cachedAt: Date.now(),
+                isFallback: true,
+                ttl: 5 * 60 * 1000 // 5 minutes for failed lookups
+            });
+            
             return '지원팀'; // Fallback to default
         }
     }
@@ -622,66 +633,92 @@ class FreshchatClient {
 
     /**
      * Update user profile with Teams information
+     * Merges with existing properties to preserve teams_conversation_id
      */
     async updateUserProfile(userId, userProfile) {
-        const properties = [
-            {
-                name: 'source',
-                value: 'Microsoft Teams'
+        try {
+            // Fetch existing user to preserve all properties
+            const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
+            const existingProperties = existingUserResponse.data.properties || [];
+
+            // Build updated properties
+            const updates = [
+                { name: 'source', value: 'Microsoft Teams' }
+            ];
+
+            if (userProfile.email) {
+                updates.push({ name: 'teams_email', value: userProfile.email });
             }
-        ];
+            if (userProfile.jobTitle) {
+                updates.push({ name: 'teams_job_title', value: userProfile.jobTitle });
+            }
+            if (userProfile.department) {
+                updates.push({ name: 'teams_department', value: userProfile.department });
+            }
+            if (userProfile.officePhone) {
+                updates.push({ name: 'teams_office_phone', value: userProfile.officePhone });
+            }
+            if (userProfile.mobilePhone) {
+                updates.push({ name: 'teams_mobile_phone', value: userProfile.mobilePhone });
+            }
+            if (userProfile.officeLocation) {
+                updates.push({ name: 'teams_office_location', value: userProfile.officeLocation });
+            }
+            if (userProfile.displayName) {
+                updates.push({ name: 'teams_display_name', value: userProfile.displayName });
+            }
 
-        if (userProfile.email) {
-            properties.push({ name: 'teams_email', value: userProfile.email });
-        }
-        if (userProfile.jobTitle) {
-            properties.push({ name: 'teams_job_title', value: userProfile.jobTitle });
-        }
-        if (userProfile.department) {
-            properties.push({ name: 'teams_department', value: userProfile.department });
-        }
-        if (userProfile.officePhone) {
-            properties.push({ name: 'teams_office_phone', value: userProfile.officePhone });
-        }
-        if (userProfile.mobilePhone) {
-            properties.push({ name: 'teams_mobile_phone', value: userProfile.mobilePhone });
-        }
-        if (userProfile.officeLocation) {
-            properties.push({ name: 'teams_office_location', value: userProfile.officeLocation });
-        }
-        if (userProfile.displayName) {
-            properties.push({ name: 'teams_display_name', value: userProfile.displayName });
-        }
+            // Merge: preserve existing properties not being updated
+            const propertyMap = new Map();
+            existingProperties.forEach(prop => propertyMap.set(prop.name, prop.value));
+            updates.forEach(prop => propertyMap.set(prop.name, prop.value));
 
-        await this.axiosInstance.put(`/users/${userId}`, {
-            properties: properties
-        });
+            const mergedProperties = Array.from(propertyMap.entries()).map(([name, value]) => ({
+                name,
+                value
+            }));
 
-        console.log(`[Freshchat] User ${userId} profile updated with Teams information`);
+            await this.axiosInstance.put(`/users/${userId}`, {
+                properties: mergedProperties
+            });
+
+            console.log(`[Freshchat] User ${userId} profile updated with Teams information`);
+        } catch (error) {
+            console.error(`[Freshchat] Failed to update user profile:`, error.response?.data || error.message);
+        }
     }
 
     /**
      * Update Freshchat user with Teams conversation ID
+     * Merges with existing properties to preserve other Teams info
      */
     async updateUserTeamsConversation(userId, teamsConversationId) {
         try {
             console.log(`[Freshchat] Updating user ${userId} with Teams conversation: ${teamsConversationId}`);
             
+            // Fetch existing user properties
+            const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
+            const existingProperties = existingUserResponse.data.properties || [];
+
+            // Build updates
+            const updates = [
+                { name: 'source', value: 'Microsoft Teams' },
+                { name: 'teams_conversation_id', value: teamsConversationId },
+                { name: 'teams_last_updated', value: new Date().toISOString() }
+            ];
+
+            // Merge properties
+            const propertyMap = new Map();
+            existingProperties.forEach(prop => propertyMap.set(prop.name, prop.value));
+            updates.forEach(prop => propertyMap.set(prop.name, prop.value));
+
+            const mergedProperties = Array.from(propertyMap.entries()).map(([name, value]) => ({
+                name,
+                value
+            }));
+
             await this.axiosInstance.put(`/users/${userId}`, {
-                properties: [
-                    {
-                        name: 'source',
-                        value: 'Microsoft Teams'
-                    },
-                    {
-                        name: 'teams_conversation_id',
-                        value: teamsConversationId
-                    },
-                    {
-                        name: 'teams_last_updated',
-                        value: new Date().toISOString()
-                    }
-                ]
+                properties: mergedProperties
             });
 
             console.log(`[Freshchat] ✅ User updated with Teams conversation ID`);
@@ -1321,47 +1358,53 @@ async function downloadTeamsAttachment(context, attachment, normalizedContentTyp
 }
 
 /**
- * Collect Teams user profile information
+ * Collect Teams user profile information using Graph API
  */
 async function collectTeamsUserProfile(context) {
     const userProfile = {};
 
     try {
-        // Get basic info from activity
         const { activity } = context;
         if (activity.from.name) {
             userProfile.displayName = activity.from.name;
         }
 
-        // Try to get member info from Teams
+        // Get basic member info from Teams
         try {
             const member = await TeamsInfo.getMember(context, activity.from.id);
 
             if (member) {
-                console.log('[Teams] Member info retrieved:', JSON.stringify(member, null, 2));
+                console.log('[Teams] Member info retrieved');
 
-                // Extract available profile information
                 if (member.name) userProfile.displayName = member.name;
                 if (member.email) userProfile.email = member.email;
                 if (member.userPrincipalName && !userProfile.email) {
                     userProfile.email = member.userPrincipalName;
                 }
 
-                // Additional properties that might be available
-                if (member.givenName) userProfile.givenName = member.givenName;
-                if (member.surname) userProfile.surname = member.surname;
-
-                // Note: jobTitle, department, officePhone, mobilePhone, officeLocation
-                // typically require Microsoft Graph API access with appropriate permissions
-                // These fields may not be available through TeamsInfo.getMember()
+                // Attempt to get extended profile via Microsoft Graph API
+                if (member.aadObjectId || activity.from.aadObjectId) {
+                    try {
+                        const aadId = member.aadObjectId || activity.from.aadObjectId;
+                        const graphProfile = await getGraphUserProfile(context, aadId);
+                        
+                        if (graphProfile) {
+                            console.log('[Graph] Extended profile retrieved');\n                            if (graphProfile.jobTitle) userProfile.jobTitle = graphProfile.jobTitle;
+                            if (graphProfile.department) userProfile.department = graphProfile.department;
+                            if (graphProfile.mobilePhone) userProfile.mobilePhone = graphProfile.mobilePhone;
+                            if (graphProfile.officeLocation) userProfile.officeLocation = graphProfile.officeLocation;
+                            if (graphProfile.businessPhones?.length > 0) {
+                                userProfile.officePhone = graphProfile.businessPhones[0];
+                            }
+                            if (graphProfile.mail && !userProfile.email) userProfile.email = graphProfile.mail;
+                        }
+                    } catch (graphError) {
+                        console.warn('[Graph] Extended profile unavailable:', graphError.message);
+                    }
+                }
             }
         } catch (memberError) {
             console.warn('[Teams] Could not retrieve member info:', memberError.message);
-        }
-
-        // Try to extract email from Teams channel data if not found
-        if (!userProfile.email && activity.from.aadObjectId) {
-            console.log('[Teams] User AAD Object ID:', activity.from.aadObjectId);
         }
 
         console.log('[Teams] User profile collected:', JSON.stringify(userProfile, null, 2));
@@ -1370,6 +1413,46 @@ async function collectTeamsUserProfile(context) {
     }
 
     return userProfile;
+}
+
+/**
+ * Get user profile from Microsoft Graph API
+ * Requires User.Read or User.ReadBasic.All permission
+ */
+async function getGraphUserProfile(context, aadObjectId) {
+    try {
+        // Note: Requires botbuilder-core v4.14+ and OAuth configuration in Azure
+        const { Client } = require('@microsoft/microsoft-graph-client');
+        require('isomorphic-fetch');
+
+        // Attempt to get token - will return null if OAuth is not configured
+        const tokenResponse = await context.adapter.getUserToken(context, 'graph');
+        
+        if (!tokenResponse || !tokenResponse.token) {
+            console.warn('[Graph] No access token - OAuth not configured or user not signed in');
+            return null;
+        }
+
+        // Create Graph client
+        const client = Client.init({
+            authProvider: (done) => {
+                done(null, tokenResponse.token);
+            }
+        });
+
+        // Fetch user profile with extended properties
+        const user = await client
+            .api(`/users/${aadObjectId}`)
+            .select(['displayName', 'mail', 'jobTitle', 'department', 'mobilePhone', 'businessPhones', 'officeLocation'])
+            .get();
+
+        return user;
+    } catch (error) {
+        // This is expected if Graph API permissions/OAuth are not configured
+        // Bridge will work with basic profile only
+        console.warn('[Graph] Could not fetch extended profile:', error.message);
+        return null;
+    }
 }
 
 /**
