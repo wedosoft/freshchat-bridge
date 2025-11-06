@@ -457,17 +457,55 @@ class FreshchatClient {
                 'Content-Type': 'application/json'
             }
         });
+        // Agent cache: Map<agentId, { name, cachedAt }>
+        this.agentCache = new Map();
+        this.agentCacheTTL = 30 * 60 * 1000; // 30 minutes
+    }
+
+    /**
+     * Get agent name with caching (30 min TTL)
+     */
+    async getAgentName(agentId) {
+        if (!agentId) {
+            return '지원팀';
+        }
+
+        // Check cache
+        const cached = this.agentCache.get(agentId);
+        if (cached && Date.now() - cached.cachedAt < this.agentCacheTTL) {
+            console.log(`[Freshchat] Using cached agent name for ${agentId}: ${cached.name}`);
+            return cached.name;
+        }
+
+        // Fetch from API
+        try {
+            console.log(`[Freshchat] Fetching agent info for ID: ${agentId}`);
+            const response = await this.axiosInstance.get(`/agents/${agentId}`);
+            const agent = response.data;
+
+            // Extract name: prefer first_name, fallback to email, then default
+            const name = agent.first_name || agent.email || '지원팀';
+
+            // Cache the result
+            this.agentCache.set(agentId, { name, cachedAt: Date.now() });
+            console.log(`[Freshchat] Agent ${agentId} name: ${name}`);
+
+            return name;
+        } catch (error) {
+            console.error(`[Freshchat] Failed to fetch agent ${agentId}:`, error.response?.data || error.message);
+            return '지원팀'; // Fallback to default
+        }
     }
 
     /**
      * Create a new conversation in Freshchat
      */
-    async createConversation(userId, userName, initialMessage, attachments = []) {
+    async createConversation(userId, userName, initialMessage, attachments = [], userProfile = {}) {
         try {
             console.log(`[Freshchat] Creating conversation for user: ${userName}`);
 
-            // First, create or get user
-            const user = await this.createOrGetUser(userId, userName);
+            // First, create or get user with profile information
+            const user = await this.createOrGetUser(userId, userName, userProfile);
 
             const messageParts = buildFreshchatMessageParts(initialMessage, attachments);
             if (messageParts.length === 0) {
@@ -507,9 +545,9 @@ class FreshchatClient {
     }
 
     /**
-     * Create or get a Freshchat user
+     * Create or get a Freshchat user with Teams profile information
      */
-    async createOrGetUser(externalId, name) {
+    async createOrGetUser(externalId, name, userProfile = {}) {
         try {
             // Try to get existing user
             const response = await this.axiosInstance.get(`/users/lookup`, {
@@ -518,6 +556,16 @@ class FreshchatClient {
 
             if (response.data && response.data.id) {
                 console.log(`[Freshchat] Found existing user: ${response.data.id}`);
+
+                // Update user properties with latest profile info
+                if (Object.keys(userProfile).length > 0) {
+                    try {
+                        await this.updateUserProfile(response.data.id, userProfile);
+                    } catch (updateError) {
+                        console.error('[Freshchat] Failed to update user profile:', updateError.message);
+                    }
+                }
+
                 return response.data;
             }
         } catch (error) {
@@ -528,20 +576,88 @@ class FreshchatClient {
         // Use fallback name if name is empty or undefined
         const userName = name && name.trim() ? name.trim() : 'Teams User';
 
+        // Build user properties
+        const properties = [
+            {
+                name: 'source',
+                value: 'Microsoft Teams'
+            }
+        ];
+
+        // Add Teams profile information to properties
+        if (userProfile.email) {
+            properties.push({ name: 'teams_email', value: userProfile.email });
+        }
+        if (userProfile.jobTitle) {
+            properties.push({ name: 'teams_job_title', value: userProfile.jobTitle });
+        }
+        if (userProfile.department) {
+            properties.push({ name: 'teams_department', value: userProfile.department });
+        }
+        if (userProfile.officePhone) {
+            properties.push({ name: 'teams_office_phone', value: userProfile.officePhone });
+        }
+        if (userProfile.mobilePhone) {
+            properties.push({ name: 'teams_mobile_phone', value: userProfile.mobilePhone });
+        }
+        if (userProfile.officeLocation) {
+            properties.push({ name: 'teams_office_location', value: userProfile.officeLocation });
+        }
+        if (userProfile.displayName) {
+            properties.push({ name: 'teams_display_name', value: userProfile.displayName });
+        }
+
         // Create new user
         const createResponse = await this.axiosInstance.post('/users', {
             reference_id: externalId,
             first_name: userName,
-            properties: [
-                {
-                    name: 'source',
-                    value: 'Microsoft Teams'
-                }
-            ]
+            email: userProfile.email || undefined,
+            properties: properties
         });
 
         console.log(`[Freshchat] User created: ${createResponse.data.id}`);
+        console.log(`[Freshchat] User properties:`, properties.map(p => `${p.name}: ${p.value}`).join(', '));
         return createResponse.data;
+    }
+
+    /**
+     * Update user profile with Teams information
+     */
+    async updateUserProfile(userId, userProfile) {
+        const properties = [
+            {
+                name: 'source',
+                value: 'Microsoft Teams'
+            }
+        ];
+
+        if (userProfile.email) {
+            properties.push({ name: 'teams_email', value: userProfile.email });
+        }
+        if (userProfile.jobTitle) {
+            properties.push({ name: 'teams_job_title', value: userProfile.jobTitle });
+        }
+        if (userProfile.department) {
+            properties.push({ name: 'teams_department', value: userProfile.department });
+        }
+        if (userProfile.officePhone) {
+            properties.push({ name: 'teams_office_phone', value: userProfile.officePhone });
+        }
+        if (userProfile.mobilePhone) {
+            properties.push({ name: 'teams_mobile_phone', value: userProfile.mobilePhone });
+        }
+        if (userProfile.officeLocation) {
+            properties.push({ name: 'teams_office_location', value: userProfile.officeLocation });
+        }
+        if (userProfile.displayName) {
+            properties.push({ name: 'teams_display_name', value: userProfile.displayName });
+        }
+
+        await this.axiosInstance.put(`/users/${userId}`, {
+            properties: properties
+        });
+
+        console.log(`[Freshchat] User ${userId} profile updated with Teams information`);
     }
 
     /**
@@ -1205,6 +1321,58 @@ async function downloadTeamsAttachment(context, attachment, normalizedContentTyp
 }
 
 /**
+ * Collect Teams user profile information
+ */
+async function collectTeamsUserProfile(context) {
+    const userProfile = {};
+
+    try {
+        // Get basic info from activity
+        const { activity } = context;
+        if (activity.from.name) {
+            userProfile.displayName = activity.from.name;
+        }
+
+        // Try to get member info from Teams
+        try {
+            const member = await TeamsInfo.getMember(context, activity.from.id);
+
+            if (member) {
+                console.log('[Teams] Member info retrieved:', JSON.stringify(member, null, 2));
+
+                // Extract available profile information
+                if (member.name) userProfile.displayName = member.name;
+                if (member.email) userProfile.email = member.email;
+                if (member.userPrincipalName && !userProfile.email) {
+                    userProfile.email = member.userPrincipalName;
+                }
+
+                // Additional properties that might be available
+                if (member.givenName) userProfile.givenName = member.givenName;
+                if (member.surname) userProfile.surname = member.surname;
+
+                // Note: jobTitle, department, officePhone, mobilePhone, officeLocation
+                // typically require Microsoft Graph API access with appropriate permissions
+                // These fields may not be available through TeamsInfo.getMember()
+            }
+        } catch (memberError) {
+            console.warn('[Teams] Could not retrieve member info:', memberError.message);
+        }
+
+        // Try to extract email from Teams channel data if not found
+        if (!userProfile.email && activity.from.aadObjectId) {
+            console.log('[Teams] User AAD Object ID:', activity.from.aadObjectId);
+        }
+
+        console.log('[Teams] User profile collected:', JSON.stringify(userProfile, null, 2));
+    } catch (error) {
+        console.error('[Teams] Error collecting user profile:', error.message);
+    }
+
+    return userProfile;
+}
+
+/**
  * Main bot logic - handles incoming messages from Teams
  */
 async function handleTeamsMessage(context) {
@@ -1348,14 +1516,16 @@ async function handleTeamsMessage(context) {
         }
 
         if (!mapping) {
-            // First message in this conversation - create new Freshchat conversation
+            // First message in this conversation - collect user profile and create new Freshchat conversation
+            const userProfile = await collectTeamsUserProfile(context);
             const initialMessage = hasTextContent ? messageText : null;
 
             const freshchatConv = await freshchatClient.createConversation(
                 activity.from.id,
                 activity.from.name,
                 initialMessage,
-                freshchatAttachments
+                freshchatAttachments,
+                userProfile
             );
 
             const freshchatConversationGuid = freshchatConv?.conversation_id
@@ -1667,6 +1837,14 @@ app.post('/freshchat/webhook', async (req, res) => {
                 return res.sendStatus(200);
             }
 
+            // Block private/internal messages from being sent to Teams
+            const messageType = message.message_type;
+            const isPrivateNote = message.botsPrivateNote === true;
+            if (messageType === 'private' || isPrivateNote) {
+                console.log(`[Freshchat] Skipping private/internal message (message_type: ${messageType}, botsPrivateNote: ${isPrivateNote})`);
+                return res.sendStatus(200);
+            }
+
             // Extract message text and files
             let messageText = '';
             const attachmentParts = [];
@@ -1680,9 +1858,32 @@ app.post('/freshchat/webhook', async (req, res) => {
                     }
 
                     if (part.file) {
+                        // Extract file extension: prioritize file_extension field, then contentType, then filename
+                        let fileName = part.file.name || 'file';
+                        const fileExtension = part.file.file_extension || part.file.fileExtension;
+                        const contentType = part.file.content_type || part.file.contentType || 'application/octet-stream';
+
+                        // If we have a file_extension but the filename doesn't have the correct extension, fix it
+                        if (fileExtension) {
+                            const hasExtension = fileName.includes('.');
+                            if (!hasExtension || !fileName.endsWith(`.${fileExtension}`)) {
+                                // Remove any existing extension and add the correct one
+                                const nameWithoutExt = hasExtension ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+                                fileName = `${nameWithoutExt}.${fileExtension}`;
+                                console.log(`[Freshchat] Fixed file extension: ${part.file.name} → ${fileName}`);
+                            }
+                        } else if (!fileName.includes('.')) {
+                            // No file_extension provided and filename has no extension, try to derive from contentType
+                            const derivedExt = contentType ? mime.extension(contentType) : null;
+                            if (derivedExt) {
+                                fileName = `${fileName}.${derivedExt}`;
+                                console.log(`[Freshchat] Added extension from contentType: ${fileName}`);
+                            }
+                        }
+
                         attachmentParts.push({
-                            name: part.file.name,
-                            contentType: part.file.content_type || part.file.contentType || 'application/octet-stream',
+                            name: fileName,
+                            contentType: contentType,
                             url: part.file.url || part.file.download_url || part.file.downloadUrl,
                             fileHash: part.file.file_hash || part.file.fileHash,
                             fileId: part.file.file_id || part.file.fileId
@@ -1937,8 +2138,15 @@ app.post('/freshchat/webhook', async (req, res) => {
             await adapter.continueConversation(
                 mapping.conversationReference,
                 async (turnContext) => {
-                    const actorLabelMap = { agent: '지원팀', system: 'System Message', bot: 'Bot Message' };
-                    const actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
+                    // Get agent name if actor is an agent
+                    let actorLabel;
+                    if (actorType === 'agent' && message.actor_id) {
+                        actorLabel = await freshchatClient.getAgentName(message.actor_id);
+                    } else {
+                        const actorLabelMap = { agent: '지원팀', system: 'System Message', bot: 'Bot Message' };
+                        actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
+                    }
+
                     let composedText = `**${actorLabel}:**`;
 
                     if (messageText) {
