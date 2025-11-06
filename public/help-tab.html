@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EXO Help 도움말</title>
+    <script src="https://res.cdn.office.net/teams-js/2.0.0/js/MicrosoftTeams.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f5f5;
+            color: #333333;
+            line-height: 1.6;
+            padding: 30px 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #6b7280 0%, #7f8694 100%);
+            color: #ffffff;
+            padding: 50px 40px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            margin-bottom: 12px;
+        }
+        
+        .header .subtitle {
+            font-size: 16px;
+            opacity: 0.85;
+            font-weight: 400;
+        }
+        
+        .section {
+            padding: 40px;
+        }
+        
+        .section + .section {
+            border-top: 1px solid #e8e8e8;
+        }
+        
+        .section h2 {
+            color: #4b5563;
+            font-size: 22px;
+            font-weight: 600;
+            margin-bottom: 24px;
+            padding-left: 12px;
+            border-left: 4px solid #9ca3af;
+        }
+        
+        .link-card {
+            display: flex;
+            align-items: flex-start;
+            padding: 20px;
+            margin-bottom: 12px;
+            background: #f9fafb;
+            border-radius: 10px;
+            border: 1px solid transparent;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+        }
+        
+        .link-card:hover {
+            background: #f3f4f6;
+            border-color: #d1d5db;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+        }
+        
+        .link-card:active {
+            transform: translateY(0);
+        }
+        
+        .link-icon {
+            font-size: 28px;
+            margin-right: 18px;
+            flex-shrink: 0;
+            opacity: 0.7;
+            filter: grayscale(100%);
+        }
+        
+        .link-content {
+            flex: 1;
+        }
+        
+        .link-content a {
+            color: #374151;
+            text-decoration: none;
+            font-size: 17px;
+            font-weight: 600;
+            display: block;
+            margin-bottom: 6px;
+            transition: color 0.2s;
+        }
+        
+        .link-card:hover .link-content a {
+            color: #6b7280;
+        }
+        
+        .link-content p {
+            color: #6b7280;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        .info-box {
+            margin: 40px;
+            padding: 30px;
+            background: #9ca3af;
+            color: #ffffff;
+            border-radius: 12px;
+            text-align: center;
+        }
+        
+        .info-box strong {
+            display: block;
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .info-box p {
+            font-size: 15px;
+            line-height: 1.7;
+            opacity: 0.9;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 20px 10px;
+            }
+            
+            .header {
+                padding: 40px 30px;
+            }
+            
+            .header h1 {
+                font-size: 26px;
+            }
+            
+            .section {
+                padding: 30px 25px;
+            }
+            
+            .link-card {
+                padding: 16px;
+            }
+            
+            .info-box {
+                margin: 30px 25px;
+                padding: 25px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>EXO Help 사용 가이드</h1>
+            <p class="subtitle">빠르고 효율적인 IT 지원을 위한 리소스</p>
+        </div>
+        
+        <div class="section">
+            <h2>빠른 링크</h2>
+            
+            <div class="link-card">
+                <div class="link-icon">📄</div>
+                <div class="link-content">
+                    <a href="https://example.com/manual" target="_blank">
+                        <strong>사용자 매뉴얼</strong>
+                    </a>
+                    <p>EXO Help 사용 방법 및 가이드</p>
+                </div>
+            </div>
+            
+            <div class="link-card">
+                <div class="link-icon">❓</div>
+                <div class="link-content">
+                    <a href="https://example.com/faq" target="_blank">
+                        <strong>자주 묻는 질문 (FAQ)</strong>
+                    </a>
+                    <p>자주 발생하는 질문과 답변</p>
+                </div>
+            </div>
+            
+            <div class="link-card">
+                <div class="link-icon">📚</div>
+                <div class="link-content">
+                    <a href="https://example.com/kb" target="_blank">
+                        <strong>지식 베이스</strong>
+                    </a>
+                    <p>문제 해결 가이드 및 팁</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>고객 지원</h2>
+            
+            <div class="link-card">
+                <div class="link-icon">✉</div>
+                <div class="link-content">
+                    <a href="mailto:support@example.com">
+                        <strong>이메일 문의</strong>
+                    </a>
+                    <p>support@example.com</p>
+                </div>
+            </div>
+            
+            <div class="link-card">
+                <div class="link-icon">☎</div>
+                <div class="link-content">
+                    <a href="tel:+82-2-1234-5678">
+                        <strong>전화 문의</strong>
+                    </a>
+                    <p>02-1234-5678 (평일 09:00-18:00)</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>POSCO International 리소스</h2>
+            
+            <div class="link-card">
+                <div class="link-icon">🏢</div>
+                <div class="link-content">
+                    <a href="https://www.posco-inc.com" target="_blank">
+                        <strong>POSCO International 홈페이지</strong>
+                    </a>
+                    <p>공식 웹사이트</p>
+                </div>
+            </div>
+            
+            <div class="link-card">
+                <div class="link-icon">🔐</div>
+                <div class="link-content">
+                    <a href="https://example.com/portal" target="_blank">
+                        <strong>내부 포털</strong>
+                    </a>
+                    <p>직원 전용 포털 사이트</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="info-box">
+            <strong>도움이 필요하신가요?</strong>
+            <p>왼쪽의 <strong>채팅</strong> 탭에서 언제든지 문의해주세요.<br>담당자가 신속하게 도움을 드리겠습니다.</p>
+        </div>
+    </div>
+    
+    <script>
+        microsoftTeams.app.initialize();
+    </script>
+    
+    <!-- 
+    ==============================================
+    📝 편집 가이드
+    ==============================================
+    
+    새로운 링크를 추가하려면 아래 템플릿을 복사해서 사용하세요:
+    
+    <div class="link-card">
+        <div class="link-icon">아이콘</div>
+        <div class="link-content">
+            <a href="URL 주소" target="_blank">
+                <strong>링크 제목</strong>
+            </a>
+            <p>링크 설명</p>
+        </div>
+    </div>
+    
+    - URL 주소: 연결할 웹사이트 주소
+    - 링크 제목: 사용자에게 표시될 제목
+    - 링크 설명: 간단한 설명 (선택사항)
+    - 아이콘: 간단한 이모지나 기호 (선택사항)
+    - target="_blank": 새 창에서 열기 (외부 링크인 경우)
+    
+    섹션을 추가하려면:
+    
+    <div class="section">
+        <h2>섹션 제목</h2>
+        
+        <!-- 여기에 link-card 들을 추가 -->
+    </div>
+    
+    -->
+</body>
+</html>

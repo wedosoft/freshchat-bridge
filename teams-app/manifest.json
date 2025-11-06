@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "id": "6a46afe9-3109-4af6-a0f9-275f6fddf929",
   "packageName": "com.wedosoft.freshchatbridge",
   "developer": {
@@ -23,6 +23,16 @@
     "full": "IT 지원센터와 바로 연결됩니다. 시스템 문제, 계정 문의, 기술 지원이 필요하시면 언제든지 문의해 주세요."
   },
   "accentColor": "#FFFFFF",
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://freshchat-bridge.fly.dev/tab-config",
+      "canUpdateConfiguration": false,
+      "scopes": [
+        "team",
+        "groupchat"
+      ]
+    }
+  ],
   "bots": [
     {
       "botId": "6a46afe9-3109-4af6-a0f9-275f6fddf929",

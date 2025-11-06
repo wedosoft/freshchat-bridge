@@ -677,6 +677,18 @@ class FreshchatClient {
                 updates.push({ name: 'teams_display_name', value: userProfile.displayName });
             }
 
+            // Check if any property has changed
+            const existingMap = new Map(existingProperties.map(p => [p.name, p.value]));
+            const hasChanges = updates.some(update => {
+                const existingValue = existingMap.get(update.name);
+                return existingValue !== update.value;
+            });
+
+            if (!hasChanges) {
+                console.log(`[Freshchat] User ${userId} profile unchanged, skipping update`);
+                return;
+            }
+
             // Merge: preserve existing properties not being updated
             const propertyMap = new Map();
             existingProperties.forEach(prop => propertyMap.set(prop.name, prop.value));
@@ -721,6 +733,15 @@ class FreshchatClient {
                 { name: 'teams_conversation_id', value: teamsConversationId },
                 { name: 'teams_last_updated', value: new Date().toISOString() }
             ];
+
+            // Check if conversation ID has changed (always update timestamp)
+            const existingMap = new Map(existingProperties.map(p => [p.name, p.value]));
+            const existingConversationId = existingMap.get('teams_conversation_id');
+            
+            if (existingConversationId === teamsConversationId) {
+                console.log(`[Freshchat] Teams conversation ID unchanged for user ${userId}, skipping update`);
+                return;
+            }
 
             // Merge properties
             const propertyMap = new Map();
@@ -1780,6 +1801,52 @@ app.get('/', (req, res) => {
             freshchat_to_teams: Array.from(reverseMap.keys())
         }
     });
+});
+
+/**
+ * Teams Tab Configuration endpoint
+ */
+app.get('/tab-config', (req, res) => {
+    res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <script src="https://res.cdn.office.net/teams-js/2.0.0/js/MicrosoftTeams.min.js"></script>
+</head>
+<body>
+    <script>
+        microsoftTeams.app.initialize().then(() => {
+            microsoftTeams.pages.config.registerOnSaveHandler((saveEvent) => {
+                microsoftTeams.pages.config.setConfig({
+                    entityId: "helpResources",
+                    contentUrl: "${PUBLIC_URL || 'https://freshchat-bridge.fly.dev'}/tab-content",
+                    suggestedDisplayName: "도움말",
+                    websiteUrl: "${PUBLIC_URL || 'https://freshchat-bridge.fly.dev'}/tab-content"
+                });
+                saveEvent.notifySuccess();
+            });
+            
+            microsoftTeams.pages.config.setValidityState(true);
+        });
+    </script>
+</body>
+</html>
+    `);
+});
+
+/**
+ * Teams Tab Content endpoint
+ */
+app.get('/tab-content', (req, res) => {
+    try {
+        const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
+        const htmlContent = fs.readFileSync(htmlPath, 'utf8');
+        res.send(htmlContent);
+    } catch (error) {
+        console.error('[Tab Content] Error loading HTML:', error);
+        res.status(500).send('Error loading help content');
+    }
 });
 
 /**
