@@ -2203,40 +2203,42 @@ app.post('/freshchat/webhook', async (req, res) => {
                                 continue;
                             }
 
-                            const fileData = await freshchatClient.downloadFile(attachment.url);
-                            const filename = `${Date.now()}-${(attachment.name || fileData.filename || 'freshchat-file').replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
-                            const filepath = path.join(UPLOADS_DIR, filename);
-                            fs.writeFileSync(filepath, fileData.buffer);
-
-                            const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${filename}`;
-
-                            const isImage = (fileData.contentType || attachment.contentType || '').startsWith('image/');
-                            const displayName = attachment.name || fileData.filename || '파일';
-                            const fileSize = fileData.buffer.length;
-                            const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
-                            
-                            // Determine file icon based on content type
-                            const contentType = (fileData.contentType || attachment.contentType || '').toLowerCase();
-                            let fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3767/3767084.png'; // default file icon
-                            
-                            if (contentType.includes('pdf')) {
-                                fileIconUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/PDF_file_icon.svg/195px-PDF_file_icon.svg.png';
-                            } else if (contentType.includes('word') || contentType.includes('document')) {
-                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965350.png';
-                            } else if (contentType.includes('excel') || contentType.includes('spreadsheet')) {
-                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965383.png';
-                            } else if (contentType.includes('powerpoint') || contentType.includes('presentation')) {
-                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965416.png';
-                            } else if (contentType.includes('text')) {
-                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3767/3767084.png';
-                            } else if (contentType.includes('zip') || contentType.includes('compressed')) {
-                                fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3143/3143615.png';
-                            }
+                            const contentType = (attachment.contentType || attachment.content_type || '').toLowerCase();
+                            const isImage = contentType.startsWith('image/');
+                            const displayName = attachment.name || '파일';
 
                             if (isImage) {
-                                // Embed images using Markdown
-                                attachmentLinks.push(`![${displayName}](${publicUrl})`);
+                                // Use Freshchat original URL directly for images (permanent, no download needed)
+                                attachmentLinks.push(`![${displayName}](${attachment.url})`);
                             } else {
+                                // Download files for Adaptive Card preview
+                                const fileData = await freshchatClient.downloadFile(attachment.url);
+                                const filename = `${Date.now()}-${(attachment.name || fileData.filename || 'freshchat-file').replace(/[^a-zA-Z0-9.\-_]/g, '')}`;
+                                const filepath = path.join(UPLOADS_DIR, filename);
+                                fs.writeFileSync(filepath, fileData.buffer);
+
+                                const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${filename}`;
+                                const fileSize = fileData.buffer.length;
+                                const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+                                
+                                // Determine file icon based on content type
+                                const fileContentType = (fileData.contentType || attachment.contentType || '').toLowerCase();
+                                let fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3767/3767084.png'; // default file icon
+                                
+                                if (fileContentType.includes('pdf')) {
+                                    fileIconUrl = 'https://upload.wikimedia.org/wikipedia/commons/thumb/8/87/PDF_file_icon.svg/195px-PDF_file_icon.svg.png';
+                                } else if (fileContentType.includes('word') || fileContentType.includes('document')) {
+                                    fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965350.png';
+                                } else if (fileContentType.includes('excel') || fileContentType.includes('spreadsheet')) {
+                                    fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965383.png';
+                                } else if (fileContentType.includes('powerpoint') || fileContentType.includes('presentation')) {
+                                    fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/2965/2965416.png';
+                                } else if (fileContentType.includes('text')) {
+                                    fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3767/3767084.png';
+                                } else if (fileContentType.includes('zip') || fileContentType.includes('compressed')) {
+                                    fileIconUrl = 'https://cdn-icons-png.flaticon.com/512/3143/3143615.png';
+                                }
+
                                 // Create Adaptive Card for file attachment
                                 const card = CardFactory.adaptiveCard({
                                     type: 'AdaptiveCard',
