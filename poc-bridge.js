@@ -472,11 +472,14 @@ class FreshchatClient {
             return '지원팀';
         }
 
-        // Check cache
+        // Check cache (respect per-entry TTL)
         const cached = this.agentCache.get(agentId);
-        if (cached && Date.now() - cached.cachedAt < this.agentCacheTTL) {
-            console.log(`[Freshchat] Using cached agent name for ${agentId}: ${cached.name}`);
-            return cached.name;
+        if (cached) {
+            const ttl = cached.ttl ?? this.agentCacheTTL;
+            if (Date.now() - cached.cachedAt < ttl) {
+                console.log(`[Freshchat] Using cached agent name for ${agentId}: ${cached.name}`);
+                return cached.name;
+            }
         }
 
         // Fetch from API
@@ -638,8 +641,14 @@ class FreshchatClient {
     async updateUserProfile(userId, userProfile) {
         try {
             // Fetch existing user to preserve all properties
-            const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
-            const existingProperties = existingUserResponse.data.properties || [];
+            let existingProperties = [];
+            try {
+                const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
+                existingProperties = existingUserResponse.data.properties || [];
+            } catch (getUserError) {
+                // If user doesn't exist (404) or read fails, proceed with empty properties
+                console.warn(`[Freshchat] Could not fetch existing user ${userId}:`, getUserError.response?.status || getUserError.message);
+            }
 
             // Build updated properties
             const updates = [
@@ -697,8 +706,14 @@ class FreshchatClient {
             console.log(`[Freshchat] Updating user ${userId} with Teams conversation: ${teamsConversationId}`);
             
             // Fetch existing user properties
-            const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
-            const existingProperties = existingUserResponse.data.properties || [];
+            let existingProperties = [];
+            try {
+                const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
+                existingProperties = existingUserResponse.data.properties || [];
+            } catch (getUserError) {
+                // If user doesn't exist (404) or read fails, proceed with empty properties
+                console.warn(`[Freshchat] Could not fetch existing user ${userId}:`, getUserError.response?.status || getUserError.message);
+            }
 
             // Build updates
             const updates = [
