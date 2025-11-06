@@ -1560,54 +1560,56 @@ async function handleTeamsMessage(context) {
                     console.log(`[Teams] Attachment: ${attachmentLabel} (${normalizedContentType || 'unknown'})`);
 
                     const downloadResult = await downloadTeamsAttachment(context, attachment, normalizedContentType);
-                    const resolvedContentType = downloadResult.contentType
+                    let resolvedContentType = downloadResult.contentType
                         || normalizedContentType
                         || 'application/octet-stream';
-                    const isImage = resolvedContentType.toLowerCase().startsWith('image/');
-                    const storedFilename = buildStoredFilename(attachmentName, resolvedContentType);
-                    const storagePath = path.join(UPLOADS_DIR, storedFilename);
-                    const effectiveName = sanitizedName || storedFilename;
-
-                    if (isImage) {
-                        // For images, save locally and create a public URL
-                        if (!PUBLIC_URL) {
-                            throw new Error('PUBLIC_URL environment variable is not set. Cannot serve images.');
+                    
+                    // If contentType is still unknown, try to detect from file buffer
+                    if (resolvedContentType === 'application/octet-stream' || !resolvedContentType) {
+                        const detectedType = mime.lookup(attachmentName) || mime.lookup(sanitizedName);
+                        if (detectedType) {
+                            resolvedContentType = detectedType;
+                            console.log(`[Teams] Detected contentType from filename: ${resolvedContentType}`);
                         }
-                        fs.writeFileSync(storagePath, downloadResult.buffer);
+                    }
+                    
+                    const isImage = resolvedContentType.toLowerCase().startsWith('image/');
+                    const effectiveName = sanitizedName || buildStoredFilename(attachmentName, resolvedContentType);
 
-                        const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${storedFilename}`;
+                    // Upload all attachments (including images) to Freshchat for permanent storage
+                    const uploadedFile = await freshchatClient.uploadFile(
+                        downloadResult.buffer,
+                        effectiveName,
+                        resolvedContentType
+                    );
+
+                    const fallbackSize = downloadResult.contentLength || downloadResult.buffer.length;
+                    const normalizedUpload = normalizeFreshchatUploadResponse(uploadedFile, {
+                        name: effectiveName,
+                        contentType: resolvedContentType,
+                        fileSize: fallbackSize
+                    });
+
+                    console.log('[Teams → Freshchat] File upload response (normalized):', {
+                        name: normalizedUpload.name,
+                        size: normalizedUpload.fileSize,
+                        contentType: normalizedUpload.contentType,
+                        fileHash: normalizedUpload.fileHash,
+                        fileId: normalizedUpload.fileId,
+                        downloadUrl: normalizedUpload.downloadUrl
+                    });
+
+                    if (isImage && normalizedUpload.downloadUrl) {
+                        // For images, use download URL directly (permanent)
                         freshchatAttachments.push({
-                            url: publicUrl,
+                            url: normalizedUpload.downloadUrl,
                             contentType: resolvedContentType,
                             content_type: resolvedContentType,
                             name: effectiveName
                         });
-                        console.log(`[Teams → Freshchat] Image served at: ${publicUrl}`);
-
+                        console.log(`[Teams → Freshchat] Image will be sent via Freshchat URL: ${normalizedUpload.downloadUrl}`);
                     } else {
-                        // For other files, upload to Freshchat and use file_hash
-                        const uploadedFile = await freshchatClient.uploadFile(
-                            downloadResult.buffer,
-                            effectiveName,
-                            resolvedContentType
-                        );
-
-                        const fallbackSize = downloadResult.contentLength || downloadResult.buffer.length;
-                        const normalizedUpload = normalizeFreshchatUploadResponse(uploadedFile, {
-                            name: effectiveName,
-                            contentType: resolvedContentType,
-                            fileSize: fallbackSize
-                        });
-
-                        console.log('[Teams → Freshchat] File upload response (normalized):', {
-                            name: normalizedUpload.name,
-                            size: normalizedUpload.fileSize,
-                            contentType: normalizedUpload.contentType,
-                            fileHash: normalizedUpload.fileHash,
-                            fileId: normalizedUpload.fileId,
-                            downloadUrl: normalizedUpload.downloadUrl
-                        });
-
+                        // For non-image files, use file_hash/file_id
                         const fileAttachmentPayload = {
                             name: normalizedUpload.name,
                             file_size_in_bytes: normalizedUpload.fileSize || fallbackSize,
@@ -1630,12 +1632,7 @@ async function handleTeamsMessage(context) {
                         }
 
                         freshchatAttachments.push(fileAttachmentPayload);
-                        console.log('[Teams → Freshchat] File prepared for send:', {
-                            name: fileAttachmentPayload.name,
-                            fileHash: fileAttachmentPayload.fileHash,
-                            fileId: fileAttachmentPayload.fileId,
-                            contentType: fileAttachmentPayload.contentType
-                        });
+                        console.log(`[Teams → Freshchat] File attachment prepared (hash: ${normalizedUpload.fileHash}, id: ${normalizedUpload.fileId})`);
                     }
                 } catch (error) {
                     if (error instanceof SkippableAttachmentError) {
