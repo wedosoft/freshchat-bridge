@@ -23,6 +23,17 @@
     "full": "IT 지원센터와 바로 연결됩니다. 시스템 문제, 계정 문의, 기술 지원이 필요하시면 언제든지 문의해 주세요."
   },
   "accentColor": "#FFFFFF",
+  "staticTabs": [
+    {
+      "entityId": "helpTab",
+      "name": "도움말",
+      "contentUrl": "https://freshchat-bridge.fly.dev/tab-content",
+      "websiteUrl": "https://freshchat-bridge.fly.dev/tab-content",
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
   "configurableTabs": [
     {
       "configurationUrl": "https://freshchat-bridge.fly.dev/tab-config",

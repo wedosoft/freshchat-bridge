@@ -36,6 +36,11 @@ const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
 const FRESHCHAT_WEBHOOK_SIGNATURE_STRICT = process.env.FRESHCHAT_WEBHOOK_SIGNATURE_STRICT !== 'false';
 const PUBLIC_URL = process.env.PUBLIC_URL;
 
+// Help Tab Configuration
+const HELP_TAB_SOURCE = process.env.HELP_TAB_SOURCE || 'local'; // 'local' | 'sharepoint' | 'onedrive'
+const HELP_TAB_FILE_URL = process.env.HELP_TAB_FILE_URL; // SharePoint/OneDrive file URL
+const HELP_TAB_CACHE_TTL = parseInt(process.env.HELP_TAB_CACHE_TTL || '300000'); // 5 minutes default
+
 // ============================================================================
 // File Storage Setup
 // ============================================================================
@@ -72,6 +77,12 @@ const FRESHCHAT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
  * Structure: { teamsUserId: { profile, timestamp } }
  */
 const userProfileCache = new Map();
+
+/**
+ * Cache for help tab content
+ * Structure: { content: string, timestamp: number }
+ */
+let helpTabCache = null;
 const USER_PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function cleanupProcessedFreshchatMessages() {
@@ -1575,19 +1586,42 @@ async function handleTeamsMessage(context) {
                     console.log(`[Teams] - Initial contentType: ${normalizedContentType || 'none'}`);
                     console.log(`[Teams] - Attachment name: ${attachmentName}`);
 
+                    // Pre-check: if initial contentType indicates image, preserve it
+                    const initialContentTypeLower = (normalizedContentType || '').toLowerCase();
+                    const isImageByInitialType = initialContentTypeLower.startsWith('image/') ||
+                                                  initialContentTypeLower === 'image/*';
+
                     const downloadResult = await downloadTeamsAttachment(context, attachment, normalizedContentType);
-                    let resolvedContentType = downloadResult.contentType
-                        || normalizedContentType
-                        || 'application/octet-stream';
 
                     console.log(`[Teams] - Downloaded contentType: ${downloadResult.contentType || 'none'}`);
 
-                    // If contentType is still unknown, try to detect from file buffer
-                    if (resolvedContentType === 'application/octet-stream' || !resolvedContentType) {
+                    // Determine final contentType with priority:
+                    // 1. If initial type was image/*, trust it
+                    // 2. Use downloaded contentType if specific
+                    // 3. Use initial contentType
+                    // 4. Try to detect from filename
+                    let resolvedContentType;
+
+                    if (isImageByInitialType && (!downloadResult.contentType || downloadResult.contentType === 'application/octet-stream')) {
+                        // Initial type was image, but download returned generic type
+                        // Try to get specific image type or use png as default
                         const detectedType = mime.lookup(attachmentName) || mime.lookup(sanitizedName);
-                        if (detectedType) {
-                            resolvedContentType = detectedType;
-                            console.log(`[Teams] - ContentType detected from filename: ${resolvedContentType}`);
+                        resolvedContentType = detectedType && detectedType.startsWith('image/')
+                            ? detectedType
+                            : 'image/png'; // Default to PNG if we know it's an image
+                        console.log(`[Teams] - Preserved image type from initial contentType: ${resolvedContentType}`);
+                    } else {
+                        resolvedContentType = downloadResult.contentType
+                            || normalizedContentType
+                            || 'application/octet-stream';
+
+                        // If still unknown, try filename detection
+                        if (resolvedContentType === 'application/octet-stream' || !resolvedContentType) {
+                            const detectedType = mime.lookup(attachmentName) || mime.lookup(sanitizedName);
+                            if (detectedType) {
+                                resolvedContentType = detectedType;
+                                console.log(`[Teams] - ContentType detected from filename: ${resolvedContentType}`);
+                            }
                         }
                     }
 
@@ -1878,6 +1912,176 @@ app.get('/', (req, res) => {
 });
 
 /**
+ * Get access token for Microsoft Graph API
+ */
+async function getGraphAccessToken() {
+    try {
+        const tokenEndpoint = `https://login.microsoftonline.com/${BOT_TENANT_ID}/oauth2/v2.0/token`;
+        const response = await axios.post(tokenEndpoint, new URLSearchParams({
+            client_id: BOT_APP_ID,
+            client_secret: BOT_APP_PASSWORD,
+            scope: 'https://graph.microsoft.com/.default',
+            grant_type: 'client_credentials'
+        }), {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        });
+
+        return response.data.access_token;
+    } catch (error) {
+        console.error('[Graph API] Failed to get access token:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+/**
+ * Fetch HTML content from SharePoint or OneDrive
+ * Supports both authenticated Graph API access and public share links
+ */
+async function fetchHelpTabFromSharePoint(fileUrl) {
+    try {
+        console.log(`[Help Tab] Fetching from SharePoint/OneDrive: ${fileUrl}`);
+
+        // Check if this is a public share link (OneDrive or SharePoint)
+        const isPublicShareLink = fileUrl.includes('1drv.ms') ||
+                                  fileUrl.includes('onedrive.live.com') ||
+                                  fileUrl.includes('sharepoint.com/:') ||
+                                  fileUrl.includes('sharepoint.com/_layouts/') ||
+                                  fileUrl.match(/\?sharingv2/i);
+
+        if (isPublicShareLink) {
+            console.log('[Help Tab] Detected public share link, fetching directly without authentication');
+
+            // For public share links, try direct download
+            let downloadUrl = fileUrl;
+
+            // Convert embed URLs to download URLs
+            if (fileUrl.includes('onedrive.live.com/embed')) {
+                // Extract resid and authkey from embed URL
+                const urlObj = new URL(fileUrl);
+                const resid = urlObj.searchParams.get('resid');
+                const authkey = urlObj.searchParams.get('authkey');
+                if (resid && authkey) {
+                    downloadUrl = `https://onedrive.live.com/download?resid=${resid}&authkey=${authkey}`;
+                    console.log(`[Help Tab] Converted embed URL to download URL: ${downloadUrl}`);
+                }
+            }
+            // Convert shortened 1drv.ms links - these need to be followed to get the actual URL
+            else if (fileUrl.includes('1drv.ms')) {
+                console.log('[Help Tab] Following shortened OneDrive link...');
+                const redirectResponse = await axios.get(fileUrl, {
+                    maxRedirects: 0,
+                    validateStatus: (status) => status === 302 || status === 301
+                });
+                const location = redirectResponse.headers.location;
+                if (location) {
+                    downloadUrl = location.replace('/view.aspx?', '/download.aspx?');
+                    console.log(`[Help Tab] Resolved to: ${downloadUrl}`);
+                }
+            }
+            // SharePoint sharing links with embed or view
+            else if (fileUrl.includes('sharepoint.com') && (fileUrl.includes('/:') || fileUrl.includes('/_layouts/'))) {
+                // Try to convert to download URL
+                downloadUrl = fileUrl.replace('/:w:/', '/download/').replace('/_layouts/15/Doc.aspx?', '/download?');
+                console.log(`[Help Tab] Converted SharePoint share link to download URL: ${downloadUrl}`);
+            }
+
+            // Fetch the content directly
+            const response = await axios.get(downloadUrl, {
+                responseType: 'text',
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (compatible; TeamsBot/1.0)'
+                }
+            });
+
+            console.log(`[Help Tab] Successfully fetched public content (${response.data.length} bytes)`);
+            return response.data;
+        }
+
+        // Not a public link - use Graph API authentication
+        console.log('[Help Tab] Using Graph API authentication for private file');
+        const accessToken = await getGraphAccessToken();
+
+        // Parse SharePoint/OneDrive URL to extract site and file path
+        // URL format: https://{tenant}.sharepoint.com/sites/{siteName}/Shared Documents/{filePath}
+        // or: https://{tenant}-my.sharepoint.com/personal/{user}/Documents/{filePath}
+
+        const url = new URL(fileUrl);
+        const pathParts = url.pathname.split('/').filter(p => p);
+
+        let graphUrl;
+        if (url.hostname.includes('-my.sharepoint.com')) {
+            // OneDrive personal
+            const userPath = pathParts.slice(0, 2).join('/'); // personal/username
+            const filePath = pathParts.slice(3).join('/'); // Skip 'Documents'
+            graphUrl = `https://graph.microsoft.com/v1.0/users/${pathParts[1]}/drive/root:/${filePath}:/content`;
+        } else {
+            // SharePoint site
+            const siteName = pathParts[1]; // sites/{siteName}
+            const filePath = pathParts.slice(3).join('/'); // Skip 'Shared Documents'
+            const hostname = url.hostname.split('.')[0]; // Extract tenant name
+            graphUrl = `https://graph.microsoft.com/v1.0/sites/${hostname}.sharepoint.com:/sites/${siteName}:/drive/root:/${filePath}:/content`;
+        }
+
+        console.log(`[Help Tab] Graph API URL: ${graphUrl}`);
+
+        const response = await axios.get(graphUrl, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`
+            }
+        });
+
+        console.log(`[Help Tab] Successfully fetched content (${response.data.length} bytes)`);
+        return response.data;
+
+    } catch (error) {
+        console.error('[Help Tab] Failed to fetch from SharePoint/OneDrive:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+/**
+ * Get help tab content with caching
+ */
+async function getHelpTabContent() {
+    const now = Date.now();
+
+    // Check cache
+    if (helpTabCache && (now - helpTabCache.timestamp) < HELP_TAB_CACHE_TTL) {
+        console.log('[Help Tab] Returning cached content');
+        return helpTabCache.content;
+    }
+
+    let content;
+
+    if (HELP_TAB_SOURCE === 'sharepoint' || HELP_TAB_SOURCE === 'onedrive') {
+        if (!HELP_TAB_FILE_URL) {
+            throw new Error('HELP_TAB_FILE_URL is required when HELP_TAB_SOURCE is sharepoint or onedrive');
+        }
+
+        try {
+            content = await fetchHelpTabFromSharePoint(HELP_TAB_FILE_URL);
+        } catch (error) {
+            console.warn('[Help Tab] Failed to fetch from SharePoint/OneDrive, falling back to local file');
+            // Fallback to local file
+            const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
+            content = fs.readFileSync(htmlPath, 'utf8');
+        }
+    } else {
+        // Local file
+        const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
+        content = fs.readFileSync(htmlPath, 'utf8');
+    }
+
+    // Update cache
+    helpTabCache = {
+        content,
+        timestamp: now
+    };
+
+    return content;
+}
+
+/**
  * Teams Tab Configuration endpoint
  */
 app.get('/tab-config', (req, res) => {
@@ -1912,14 +2116,89 @@ app.get('/tab-config', (req, res) => {
 /**
  * Teams Tab Content endpoint
  */
-app.get('/tab-content', (req, res) => {
+app.get('/tab-content', async (req, res) => {
     try {
-        const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
-        const htmlContent = fs.readFileSync(htmlPath, 'utf8');
+        const htmlContent = await getHelpTabContent();
         res.send(htmlContent);
     } catch (error) {
         console.error('[Tab Content] Error loading HTML:', error);
-        res.status(500).send('Error loading help content');
+
+        // Send fallback error page
+        res.status(500).send(`
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>오류 발생</title>
+    <script src="https://res.cdn.office.net/teams-js/2.0.0/js/MicrosoftTeams.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .error-container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 500px;
+        }
+        h1 { color: #d32f2f; font-size: 24px; margin-bottom: 16px; }
+        p { color: #666; line-height: 1.6; margin-bottom: 24px; }
+        .retry-btn {
+            background: #6b7280;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .retry-btn:hover { background: #7f8694; }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <h1>⚠️ 도움말을 불러올 수 없습니다</h1>
+        <p>일시적인 오류로 도움말 페이지를 표시할 수 없습니다.<br>잠시 후 다시 시도해 주세요.</p>
+        <button class="retry-btn" onclick="location.reload()">다시 시도</button>
+    </div>
+    <script>microsoftTeams.app.initialize();</script>
+</body>
+</html>
+        `);
+    }
+});
+
+/**
+ * Manual cache refresh endpoint for help tab
+ */
+app.post('/tab-content/refresh', async (req, res) => {
+    try {
+        console.log('[Help Tab] Manual cache refresh requested');
+        helpTabCache = null; // Clear cache
+        const content = await getHelpTabContent();
+        res.json({
+            success: true,
+            message: 'Help tab cache refreshed successfully',
+            contentLength: content.length,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('[Help Tab] Cache refresh failed:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
