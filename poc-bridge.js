@@ -291,7 +291,21 @@ function extractAttachmentContentType(attachment) {
     ];
 
     const match = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
-    return match ? match.toLowerCase() : '';
+    if (match) {
+        return match.toLowerCase();
+    }
+
+    // Fallback: detect from filename if contentType not available
+    const attachmentName = extractAttachmentName(attachment);
+    if (attachmentName) {
+        const detectedType = mime.lookup(attachmentName);
+        if (detectedType) {
+            console.log(`[Teams] ContentType detected from filename "${attachmentName}": ${detectedType}`);
+            return detectedType.toLowerCase();
+        }
+    }
+
+    return '';
 }
 
 function buildStoredFilename(preferredName, contentType) {
@@ -1557,23 +1571,43 @@ async function handleTeamsMessage(context) {
                 const attachmentLabel = sanitizedName || attachmentName || 'unnamed-attachment';
 
                 try {
-                    console.log(`[Teams] Attachment: ${attachmentLabel} (${normalizedContentType || 'unknown'})`);
+                    console.log(`[Teams] Processing attachment "${attachmentLabel}"`);
+                    console.log(`[Teams] - Initial contentType: ${normalizedContentType || 'none'}`);
+                    console.log(`[Teams] - Attachment name: ${attachmentName}`);
 
                     const downloadResult = await downloadTeamsAttachment(context, attachment, normalizedContentType);
                     let resolvedContentType = downloadResult.contentType
                         || normalizedContentType
                         || 'application/octet-stream';
-                    
+
+                    console.log(`[Teams] - Downloaded contentType: ${downloadResult.contentType || 'none'}`);
+
                     // If contentType is still unknown, try to detect from file buffer
                     if (resolvedContentType === 'application/octet-stream' || !resolvedContentType) {
                         const detectedType = mime.lookup(attachmentName) || mime.lookup(sanitizedName);
                         if (detectedType) {
                             resolvedContentType = detectedType;
-                            console.log(`[Teams] Detected contentType from filename: ${resolvedContentType}`);
+                            console.log(`[Teams] - ContentType detected from filename: ${resolvedContentType}`);
                         }
                     }
-                    
-                    const isImage = resolvedContentType.toLowerCase().startsWith('image/');
+
+                    // Check if it's an image by contentType OR by filename extension
+                    let isImage = resolvedContentType.toLowerCase().startsWith('image/');
+
+                    // Additional check: if filename suggests image but contentType doesn't
+                    if (!isImage && attachmentName) {
+                        const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg'];
+                        const hasImageExtension = imageExtensions.some(ext =>
+                            attachmentName.toLowerCase().endsWith(ext)
+                        );
+                        if (hasImageExtension) {
+                            isImage = true;
+                            console.log(`[Teams] - Detected as image by filename extension: ${attachmentName}`);
+                        }
+                    }
+
+                    console.log(`[Teams] - Final contentType: ${resolvedContentType}`);
+                    console.log(`[Teams] - Is image: ${isImage}`);
                     const storedFilename = buildStoredFilename(attachmentName, resolvedContentType);
                     const storagePath = path.join(UPLOADS_DIR, storedFilename);
                     const effectiveName = sanitizedName || storedFilename;
