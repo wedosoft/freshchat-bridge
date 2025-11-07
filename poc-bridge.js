@@ -2001,37 +2001,54 @@ async function fetchHelpTabFromSharePoint(fileUrl) {
         console.log('[Help Tab] Using Graph API authentication for private file');
         const accessToken = await getGraphAccessToken();
 
-        // Parse SharePoint/OneDrive URL to extract site and file path
-        // URL format: https://{tenant}.sharepoint.com/sites/{siteName}/Shared Documents/{filePath}
-        // or: https://{tenant}-my.sharepoint.com/personal/{user}/Documents/{filePath}
+        const shareLinkPattern = /\.sharepoint\.com\/:/i;
 
-        const url = new URL(fileUrl);
-        const pathParts = url.pathname.split('/').filter(p => p);
+        let graphUrl = null;
+        if (shareLinkPattern.test(fileUrl)) {
+            // For SharePoint/OneDrive sharing links, leverage the Graph shares API
+            const encodedShareUrl = Buffer.from(fileUrl)
+                .toString('base64')
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/g, '');
 
-        let graphUrl;
-        if (url.hostname.includes('-my.sharepoint.com')) {
-            // OneDrive personal
-            const userPath = pathParts.slice(0, 2).join('/'); // personal/username
-            const filePath = pathParts.slice(3).join('/'); // Skip 'Documents'
-            graphUrl = `https://graph.microsoft.com/v1.0/users/${pathParts[1]}/drive/root:/${filePath}:/content`;
-        } else {
-            // SharePoint site
-            const siteName = pathParts[1]; // sites/{siteName}
-            const filePath = pathParts.slice(3).join('/'); // Skip 'Shared Documents'
-            const hostname = url.hostname.split('.')[0]; // Extract tenant name
-            graphUrl = `https://graph.microsoft.com/v1.0/sites/${hostname}.sharepoint.com:/sites/${siteName}:/drive/root:/${filePath}:/content`;
+            graphUrl = `https://graph.microsoft.com/v1.0/shares/u!${encodedShareUrl}/driveItem/content`;
+            console.log('[Help Tab] Resolved share link via Graph shares API');
         }
 
-        console.log(`[Help Tab] Graph API URL: ${graphUrl}`);
+        if (!graphUrl) {
+            // Parse SharePoint/OneDrive URL to extract site and file path
+            // URL format: https://{tenant}.sharepoint.com/sites/{siteName}/Shared Documents/{filePath}
+            // or: https://{tenant}-my.sharepoint.com/personal/{user}/Documents/{filePath}
+
+            const url = new URL(fileUrl);
+            const pathParts = url.pathname.split('/').filter(p => p);
+
+            if (url.hostname.includes('-my.sharepoint.com')) {
+                // OneDrive personal
+                const filePath = pathParts.slice(3).join('/'); // Skip 'Documents'
+                graphUrl = `https://graph.microsoft.com/v1.0/users/${pathParts[1]}/drive/root:/${filePath}:/content`;
+            } else {
+                // SharePoint site
+                const siteName = pathParts[1]; // sites/{siteName}
+                const filePath = pathParts.slice(3).join('/'); // Skip 'Shared Documents'
+                const hostname = url.hostname.split('.')[0]; // Extract tenant name
+                graphUrl = `https://graph.microsoft.com/v1.0/sites/${hostname}.sharepoint.com:/sites/${siteName}:/drive/root:/${filePath}:/content`;
+            }
+
+            console.log(`[Help Tab] Graph API URL: ${graphUrl}`);
+        }
 
         const response = await axios.get(graphUrl, {
+            responseType: 'arraybuffer',
             headers: {
                 'Authorization': `Bearer ${accessToken}`
             }
         });
 
-        console.log(`[Help Tab] Successfully fetched content (${response.data.length} bytes)`);
-        return response.data;
+        const content = Buffer.from(response.data).toString('utf8');
+        console.log(`[Help Tab] Successfully fetched content (${content.length} bytes)`);
+        return content;
 
     } catch (error) {
         console.error('[Help Tab] Failed to fetch from SharePoint/OneDrive:', error.response?.data || error.message);
@@ -2857,7 +2874,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                     if (actorType === 'agent' && message.actor_id) {
                         actorLabel = await freshchatClient.getAgentName(message.actor_id);
                     } else {
-                        const actorLabelMap = { agent: '지원팀', system: 'System Message', bot: 'Bot Message' };
+                        const actorLabelMap = { agent: '지원팀', system: 'EXO Help', bot: '봇 메시지' };
                         actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
                     }
 
