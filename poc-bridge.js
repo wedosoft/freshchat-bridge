@@ -2425,7 +2425,7 @@ const processBotRequest = async (req, res) => {
                     if (member.id === context.activity.recipient.id) {
                         // Bot was added to the conversation
                         await context.sendActivity(
-                            '안녕하세요. EXO헬프 입니다. 문의사항을 작성해주시면, 담당자에게 자동으로 연결됩니다.'
+                            '안녕하세요.  EXO 메일(Outlook) OPEN에 따른 문의 대응을 위한 EXO Help입니다. 문의 또는 도움이 필요하신 분은 이곳으로 메시지를 보내주시면 자동으로 담당자와의 1:1채팅이 시작됩니다.'
                         );
                     }
                 }
