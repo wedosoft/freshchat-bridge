@@ -2203,6 +2203,199 @@ app.post('/tab-content/refresh', async (req, res) => {
 });
 
 /**
+ * Admin consent endpoint - redirects to Azure AD consent page
+ * This allows customer admins to grant organization-wide consent for Graph API permissions
+ */
+app.get('/auth/admin-consent', (req, res) => {
+    const tenantId = BOT_TENANT_ID || 'common';
+    const clientId = BOT_APP_ID;
+    const redirectUri = encodeURIComponent(`${PUBLIC_URL}/auth/admin-consent/callback`);
+
+    const consentUrl = `https://login.microsoftonline.com/${tenantId}/adminconsent` +
+        `?client_id=${clientId}` +
+        `&redirect_uri=${redirectUri}` +
+        `&state=${Date.now()}`;
+
+    console.log(`[Admin Consent] Redirecting to: ${consentUrl}`);
+    res.redirect(consentUrl);
+});
+
+/**
+ * Admin consent callback endpoint
+ */
+app.get('/auth/admin-consent/callback', (req, res) => {
+    const { error, error_description, admin_consent, tenant } = req.query;
+
+    if (error) {
+        console.error('[Admin Consent] Error:', error, error_description);
+        return res.send(`
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>권한 승인 실패</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.1);
+            max-width: 600px;
+        }
+        h1 { color: #d32f2f; font-size: 24px; margin-bottom: 16px; }
+        p { color: #666; line-height: 1.6; margin-bottom: 16px; }
+        .error-code { background: #f5f5f5; padding: 12px; border-radius: 6px; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>❌ 권한 승인 실패</h1>
+        <p>관리자 권한 승인 중 오류가 발생했습니다.</p>
+        <div class="error-code">
+            <strong>오류:</strong> ${error}<br>
+            <strong>설명:</strong> ${error_description || '알 수 없는 오류'}
+        </div>
+        <p style="margin-top: 24px;">IT 관리자에게 문의하시거나, Azure Portal에서 직접 권한을 부여해 주세요.</p>
+    </div>
+</body>
+</html>
+        `);
+    }
+
+    if (admin_consent === 'True') {
+        console.log(`[Admin Consent] Success for tenant: ${tenant}`);
+        return res.send(`
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>권한 승인 완료</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 2px 16px rgba(0,0,0,0.1);
+            max-width: 600px;
+            text-align: center;
+        }
+        h1 { color: #2e7d32; font-size: 28px; margin-bottom: 16px; }
+        p { color: #666; line-height: 1.6; margin-bottom: 16px; }
+        .success-icon { font-size: 64px; margin-bottom: 24px; }
+        .info-box {
+            background: #e8f5e9;
+            border-left: 4px solid #2e7d32;
+            padding: 16px;
+            text-align: left;
+            border-radius: 6px;
+            margin-top: 24px;
+        }
+        .info-box strong { color: #1b5e20; }
+        ul { text-align: left; color: #666; margin-top: 12px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success-icon">✅</div>
+        <h1>권한 승인 완료!</h1>
+        <p>EXO헬프 앱이 조직 전체에서 필요한 권한을 성공적으로 획득했습니다.</p>
+        <div class="info-box">
+            <strong>부여된 권한:</strong>
+            <ul>
+                <li>📋 <strong>User.Read.All</strong> - 사용자 프로필 정보 읽기</li>
+                <li>📁 <strong>Sites.Read.All</strong> - SharePoint 파일 읽기</li>
+                <li>👥 <strong>Team.ReadBasic.All</strong> - Teams 정보 읽기</li>
+            </ul>
+        </div>
+        <p style="margin-top: 24px; font-size: 14px; color: #999;">
+            이제 이 창을 닫으셔도 됩니다. Teams 앱에서 정상적으로 사용자 정보와 도움말 탭이 표시됩니다.
+        </p>
+    </div>
+</body>
+</html>
+        `);
+    }
+
+    res.status(400).send('Invalid consent response');
+});
+
+/**
+ * Check current Graph API permissions status
+ */
+app.get('/auth/permissions-status', async (req, res) => {
+    try {
+        const accessToken = await getGraphAccessToken();
+
+        // Try to test each permission by making a sample call
+        const permissions = {
+            'User.Read.All': { granted: false, tested: false },
+            'Sites.Read.All': { granted: false, tested: false },
+            'Team.ReadBasic.All': { granted: false, tested: false }
+        };
+
+        // Test User.Read.All
+        try {
+            await axios.get('https://graph.microsoft.com/v1.0/users?$top=1', {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+            permissions['User.Read.All'].granted = true;
+            permissions['User.Read.All'].tested = true;
+        } catch (error) {
+            permissions['User.Read.All'].tested = true;
+            permissions['User.Read.All'].error = error.response?.status || error.message;
+        }
+
+        // Test Sites.Read.All (if configured)
+        if (HELP_TAB_SOURCE === 'sharepoint' && HELP_TAB_FILE_URL) {
+            try {
+                await fetchHelpTabFromSharePoint(HELP_TAB_FILE_URL);
+                permissions['Sites.Read.All'].granted = true;
+                permissions['Sites.Read.All'].tested = true;
+            } catch (error) {
+                permissions['Sites.Read.All'].tested = true;
+                permissions['Sites.Read.All'].error = error.response?.status || error.message;
+            }
+        }
+
+        res.json({
+            success: true,
+            tenant: BOT_TENANT_ID,
+            permissions,
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            hint: 'Failed to get access token. Check BOT_APP_ID and BOT_APP_PASSWORD in .env'
+        });
+    }
+});
+
+/**
  * Bot Framework endpoint - receives messages from Teams
  */
 const processBotRequest = async (req, res) => {

@@ -60,6 +60,10 @@
     "identity",
     "messageTeamMembers"
   ],
+  "webApplicationInfo": {
+    "id": "6a46afe9-3109-4af6-a0f9-275f6fddf929",
+    "resource": "api://freshchat-bridge.fly.dev/6a46afe9-3109-4af6-a0f9-275f6fddf929"
+  },
   "validDomains": [
     "*.freshchat.com",
     "freshchat-bridge.fly.dev"
