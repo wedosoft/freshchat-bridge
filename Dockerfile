@@ -13,6 +13,7 @@ RUN mkdir -p uploads
 
 # Bundle app source
 COPY poc-bridge.js ./
+COPY public ./public
 
 # Expose port 3978
 EXPOSE 3978
