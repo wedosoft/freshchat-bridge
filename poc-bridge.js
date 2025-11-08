@@ -2879,17 +2879,21 @@ app.post('/freshchat/webhook', async (req, res) => {
                         senderName = actorLabelMap[actorType] || 'Freshchat Update';
                     }
 
-                    // Compose message text without agent name prefix
+                    // Compose message text with agent name prefix
                     let composedText = '';
 
                     if (messageText) {
-                        composedText = messageText;
+                        composedText = `**[${senderName}]**\n\n${messageText}`;
                     }
 
                     if (attachmentLinks.length > 0) {
-                        composedText = composedText
-                            ? `${composedText}\n\n${attachmentLinks.join('\n')}`
-                            : attachmentLinks.join('\n');
+                        const links = attachmentLinks.join('\n');
+                        if (composedText) {
+                            composedText = `${composedText}\n\n${links}`;
+                        } else {
+                            // Attachment only, still show sender name
+                            composedText = `**[${senderName}]**\n\n${links}`;
+                        }
                     }
 
                     // Send text message with sender name in activity
