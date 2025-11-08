@@ -2883,7 +2883,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                     let composedText = '';
 
                     if (messageText) {
-                        composedText = `**[${senderName}]**\n\n${messageText}`;
+                        composedText = `👤 **${senderName}**\n\n${messageText}`;
                     }
 
                     if (attachmentLinks.length > 0) {
@@ -2892,7 +2892,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                             composedText = `${composedText}\n\n${links}`;
                         } else {
                             // Attachment only, still show sender name
-                            composedText = `**[${senderName}]**\n\n${links}`;
+                            composedText = `👤 **${senderName}**\n\n${links}`;
                         }
                     }
 
