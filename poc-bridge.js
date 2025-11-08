@@ -16,8 +16,6 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
-const { Client } = require('@microsoft/microsoft-graph-client');
-require('isomorphic-fetch');
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -961,6 +959,30 @@ class FreshchatClient {
     }
 
     /**
+     * Delete a message from a Freshchat conversation (best effort)
+     */
+    async deleteConversationMessage(conversationId, messageId) {
+        if (!conversationId || !messageId) {
+            return false;
+        }
+
+        try {
+            await this.axiosInstance.delete(`/conversations/${conversationId}/messages/${messageId}`);
+            console.log(`[Freshchat] Deleted message ${messageId} from conversation ${conversationId}`);
+            return true;
+        } catch (error) {
+            const status = error.response?.status;
+            if (status === 404) {
+                console.warn(`[Freshchat] Message ${messageId} already removed or not found in conversation ${conversationId}`);
+                return false;
+            }
+
+            console.warn('[Freshchat] Failed to delete system message:', error.response?.data || error.message);
+            return false;
+        }
+    }
+
+    /**
      * Send a message to an existing Freshchat conversation
      */
     async sendMessage(conversationId, userId, message, attachments = [], options = {}) {
@@ -1472,8 +1494,8 @@ async function collectTeamsUserProfile(context) {
                 if (member.aadObjectId || activity.from.aadObjectId) {
                     try {
                         const aadId = member.aadObjectId || activity.from.aadObjectId;
-                        const graphProfile = await getGraphUserProfile(context, aadId);
-                        
+                        const graphProfile = await getGraphUserProfileAppOnly(aadId);
+
                         if (graphProfile) {
                             console.log('[Graph] Extended profile retrieved');
                             if (graphProfile.jobTitle) userProfile.jobTitle = graphProfile.jobTitle;
@@ -1509,41 +1531,41 @@ async function collectTeamsUserProfile(context) {
 }
 
 /**
- * Get user profile from Microsoft Graph API
- * Requires User.Read or User.ReadBasic.All permission
+ * Get user profile from Microsoft Graph API using application permissions
  */
-async function getGraphUserProfile(context, aadObjectId) {
+async function getGraphUserProfileAppOnly(aadObjectId) {
+    if (!aadObjectId) {
+        return null;
+    }
+
     try {
-        // Note: Requires botbuilder-core v4.14+ and OAuth configuration in Azure
-        const { Client } = require('@microsoft/microsoft-graph-client');
-        require('isomorphic-fetch');
+        const accessToken = await getGraphAccessToken();
+        const selectFields = [
+            'displayName',
+            'mail',
+            'jobTitle',
+            'department',
+            'mobilePhone',
+            'businessPhones',
+            'officeLocation'
+        ].join(',');
 
-        // Attempt to get token - will return null if OAuth is not configured
-        const tokenResponse = await context.adapter.getUserToken(context, 'graph');
-        
-        if (!tokenResponse || !tokenResponse.token) {
-            console.warn('[Graph] No access token - OAuth not configured or user not signed in');
-            return null;
-        }
-
-        // Create Graph client
-        const client = Client.init({
-            authProvider: (done) => {
-                done(null, tokenResponse.token);
+        const response = await axios.get(
+            `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(aadObjectId)}`,
+            {
+                headers: { Authorization: `Bearer ${accessToken}` },
+                params: { $select: selectFields }
             }
-        });
+        );
 
-        // Fetch user profile with extended properties
-        const user = await client
-            .api(`/users/${aadObjectId}`)
-            .select(['displayName', 'mail', 'jobTitle', 'department', 'mobilePhone', 'businessPhones', 'officeLocation'])
-            .get();
-
-        return user;
+        return response.data;
     } catch (error) {
-        // This is expected if Graph API permissions/OAuth are not configured
-        // Bridge will work with basic profile only
-        console.warn('[Graph] Could not fetch extended profile:', error.message);
+        const status = error.response?.status;
+        const statusText = error.response?.statusText;
+        const errorDetail = status
+            ? `${status}${statusText ? ` ${statusText}` : ''}`
+            : error.message;
+        console.warn('[Graph] Could not fetch extended profile (app-only):', errorDetail);
         return null;
     }
 }
@@ -2592,6 +2614,11 @@ app.post('/freshchat/webhook', async (req, res) => {
 
                 if (messageId) {
                     markFreshchatMessageProcessed(messageId);
+                    try {
+                        await freshchatClient.deleteConversationMessage(freshchatConversationId, messageId);
+                    } catch (deleteError) {
+                        console.warn('[Freshchat] Failed to delete welcome message:', deleteError.message);
+                    }
                 }
 
                 return res.sendStatus(200);
