@@ -2420,75 +2420,15 @@ const processBotRequest = async (req, res) => {
         if (context.activity.type === 'message') {
             await handleTeamsMessage(context);
         } else if (context.activity.type === 'conversationUpdate') {
-            // Proactively create Freshchat conversation when user opens chat
-            // This triggers Freshchat's channel welcome message to be sent
+            // Log conversation events
             if (context.activity.membersAdded) {
-                for (const member of context.activity.membersAdded) {
-                    // Only process when a real user (not the bot itself) joins
-                    if (member.id !== context.activity.recipient.id) {
-                        console.log('[Bot] User joined conversation:', member.id);
-
-                        try {
-                            const activity = context.activity;
-                            const teamsConvId = activity.conversation.id;
-
-                            // Check if mapping already exists
-                            const existingMapping = conversationMap.get(teamsConvId);
-                            if (existingMapping) {
-                                console.log('[Bot] Conversation mapping already exists, skipping');
-                                continue;
-                            }
-
-                            // Collect user profile
-                            const userProfile = await collectTeamsUserProfile(context);
-
-                            // Create Freshchat conversation with null message to trigger welcome message
-                            const freshchatConv = await freshchatClient.createConversation(
-                                member.id,
-                                member.name || activity.from?.name || 'Teams User',
-                                null, // null triggers Freshchat channel welcome message
-                                [],
-                                userProfile
-                            );
-
-                            const freshchatConversationGuid = freshchatConv?.conversation_id
-                                ? String(freshchatConv.conversation_id)
-                                : null;
-
-                            const freshchatConversationNumericId = freshchatConv?.freshchat_conversation_id
-                                ? String(freshchatConv.freshchat_conversation_id)
-                                : null;
-
-                            if (!freshchatConversationGuid && !freshchatConversationNumericId) {
-                                throw new Error('Freshchat API response is missing conversation identifiers');
-                            }
-
-                            // Create conversation mapping
-                            updateConversationMapping(teamsConvId, {
-                                freshchatConversationGuid,
-                                freshchatConversationNumericId,
-                                freshchatUserId: freshchatConv.user_id,
-                                conversationReference: TurnContext.getConversationReference(activity)
-                            });
-
-                            console.log(`[Bot] Proactive conversation created: Teams(${teamsConvId}) ↔ Freshchat(${freshchatConversationGuid || freshchatConversationNumericId})`);
-
-                            // Store Teams conversation ID in Freshchat user properties
-                            freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId)
-                                .catch(err => console.warn('[Freshchat] Background profile update failed:', err.message));
-
-                        } catch (error) {
-                            console.error('[Bot] Failed to create proactive conversation:', error.message);
-                            // Don't throw - fallback to creating conversation on first message
-                        }
-                    }
-                }
+                console.log('[Bot] Members added:', context.activity.membersAdded.length);
             }
-
-            // Log member removal events
             if (context.activity.membersRemoved) {
                 console.log('[Bot] Members removed:', context.activity.membersRemoved.length);
             }
+            // Note: Freshchat conversation will be created on first user message
+            // This allows Freshchat channel welcome message to trigger properly
         }
     });
 };
@@ -2638,8 +2578,10 @@ app.post('/freshchat/webhook', async (req, res) => {
             const attachmentParts = [];
 
             if (message.message_parts && message.message_parts.length > 0) {
+                console.log('[Freshchat] Message parts:', JSON.stringify(message.message_parts, null, 2));
                 for (const part of message.message_parts) {
                     if (part.text?.content) {
+                        console.log('[Freshchat] Text content:', part.text.content);
                         messageText = messageText
                             ? `${messageText}\n${part.text.content}`
                             : part.text.content;
