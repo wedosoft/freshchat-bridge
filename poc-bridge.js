@@ -959,57 +959,6 @@ class FreshchatClient {
     }
 
     /**
-     * Delete a message from a Freshchat conversation (best effort)
-     */
-    async deleteConversationMessage(conversationIds, messageId) {
-        if (!messageId) {
-            return false;
-        }
-
-        const candidates = Array.isArray(conversationIds)
-            ? conversationIds
-            : [conversationIds];
-
-        const identifiers = Array.from(new Set(
-            candidates
-                .map((id) => (id === null || id === undefined ? '' : String(id).trim()))
-                .filter((id) => id.length > 0)
-        ));
-
-        if (identifiers.length === 0) {
-            console.warn('[Freshchat] No conversation identifiers provided for deleteConversationMessage');
-            return false;
-        }
-
-        let succeeded = false;
-        let lastError = null;
-
-        for (const conversationId of identifiers) {
-            try {
-                await this.axiosInstance.delete(`/conversations/${conversationId}/messages/${messageId}`);
-                console.log(`[Freshchat] Deleted message ${messageId} from conversation ${conversationId}`);
-                succeeded = true;
-                break;
-            } catch (error) {
-                lastError = error;
-                const status = error.response?.status;
-                if (status === 404) {
-                    console.warn(`[Freshchat] Message ${messageId} not found under conversation ${conversationId} (404)`);
-                    continue;
-                }
-
-                console.warn('[Freshchat] Failed to delete system message:', error.response?.data || error.message);
-            }
-        }
-
-        if (!succeeded && lastError) {
-            console.warn('[Freshchat] Could not delete system message with any identifier');
-        }
-
-        return succeeded;
-    }
-
-    /**
      * Send a message to an existing Freshchat conversation
      */
     async sendMessage(conversationId, userId, message, attachments = [], options = {}) {
@@ -2641,14 +2590,6 @@ app.post('/freshchat/webhook', async (req, res) => {
 
                 if (messageId) {
                     markFreshchatMessageProcessed(messageId);
-                    try {
-                        await freshchatClient.deleteConversationMessage(
-                            [freshchatConversationId, conversationGuid],
-                            messageId
-                        );
-                    } catch (deleteError) {
-                        console.warn('[Freshchat] Failed to delete welcome message:', deleteError.message);
-                    }
                 }
 
                 return res.sendStatus(200);
