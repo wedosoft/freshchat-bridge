@@ -35,6 +35,8 @@ const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
 const FRESHCHAT_WEBHOOK_SIGNATURE_STRICT = process.env.FRESHCHAT_WEBHOOK_SIGNATURE_STRICT !== 'false';
 const PUBLIC_URL = process.env.PUBLIC_URL;
+const CUSTOM_GREETING_MESSAGE = process.env.CUSTOM_GREETING_MESSAGE
+    || '안녕하세요. EXO 메일(Outlook) OPEN에 따른 문의 대응을 위한 EXO Help입니다. 문의 또는 도움이 필요하신 분은 이곳으로 메시지를 보내주시면 자동으로 담당자와의 1:1채팅이 시작됩니다.';
 
 // Help Tab Configuration
 const HELP_TAB_SOURCE = process.env.HELP_TAB_SOURCE || 'local'; // 'local' | 'sharepoint' | 'onedrive'
@@ -2562,6 +2564,36 @@ app.post('/freshchat/webhook', async (req, res) => {
             const allowedActorTypes = new Set(['agent', 'system', 'bot']);
             if (!allowedActorTypes.has(actorType)) {
                 console.log(`[Freshchat] Ignoring message from actor type: ${actorType}`);
+                return res.sendStatus(200);
+            }
+
+            const primaryTextPart = message.message_parts?.find((part) => part?.text);
+            const primaryTextContent = primaryTextPart?.text?.content ? String(primaryTextPart.text.content).trim() : '';
+            const isFreshchatWelcome = actorType === 'system'
+                && (primaryTextContent === '.' || primaryTextContent === '' || primaryTextContent === '•');
+
+            if (isFreshchatWelcome) {
+                console.log('[Freshchat] Detected Freshchat system welcome message - suppressing default dot payload');
+
+                if (!mapping.greetingSent && mapping.conversationReference) {
+                    try {
+                        await adapter.continueConversation(
+                            mapping.conversationReference,
+                            async (turnContext) => {
+                                await turnContext.sendActivity(CUSTOM_GREETING_MESSAGE);
+                            }
+                        );
+                        updateConversationMapping(teamsConvId, { greetingSent: true });
+                        console.log('[Freshchat] Custom welcome message sent to Teams conversation');
+                    } catch (proactiveError) {
+                        console.error('[Freshchat] Failed to send custom welcome message:', proactiveError.message);
+                    }
+                }
+
+                if (messageId) {
+                    markFreshchatMessageProcessed(messageId);
+                }
+
                 return res.sendStatus(200);
             }
 
