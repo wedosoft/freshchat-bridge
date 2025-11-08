@@ -33,8 +33,9 @@ const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
 const FRESHCHAT_WEBHOOK_SIGNATURE_STRICT = process.env.FRESHCHAT_WEBHOOK_SIGNATURE_STRICT !== 'false';
 const PUBLIC_URL = process.env.PUBLIC_URL;
-const CUSTOM_GREETING_MESSAGE = process.env.CUSTOM_GREETING_MESSAGE
-    || '안녕하세요. EXO 메일(Outlook) OPEN에 따른 문의 대응을 위한 EXO Help입니다. 문의 또는 도움이 필요하신 분은 이곳으로 메시지를 보내주시면 자동으로 담당자와의 1:1채팅이 시작됩니다.';
+const CUSTOM_GREETING_MESSAGE = (process.env.CUSTOM_GREETING_MESSAGE || '').trim();
+const CUSTOM_GREETING_ENABLED = process.env.CUSTOM_GREETING_ENABLED === 'true'
+    && CUSTOM_GREETING_MESSAGE.length > 0;
 
 // Help Tab Configuration
 const HELP_TAB_SOURCE = process.env.HELP_TAB_SOURCE || 'local'; // 'local' | 'sharepoint' | 'onedrive'
@@ -2573,7 +2574,7 @@ app.post('/freshchat/webhook', async (req, res) => {
             if (isFreshchatWelcome) {
                 console.log('[Freshchat] Detected Freshchat system welcome message - suppressing default dot payload');
 
-                if (!mapping.greetingSent && mapping.conversationReference) {
+                if (CUSTOM_GREETING_ENABLED && !mapping.greetingSent && mapping.conversationReference) {
                     try {
                         await adapter.continueConversation(
                             mapping.conversationReference,
