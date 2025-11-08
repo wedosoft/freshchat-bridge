@@ -2420,16 +2420,14 @@ const processBotRequest = async (req, res) => {
         if (context.activity.type === 'message') {
             await handleTeamsMessage(context);
         } else if (context.activity.type === 'conversationUpdate') {
-            if (context.activity.membersAdded) {
-                for (const member of context.activity.membersAdded) {
-                    if (member.id === context.activity.recipient.id) {
-                        // Bot was added to the conversation
-                        await context.sendActivity(
-                            '안녕하세요.  EXO 메일(Outlook) OPEN에 따른 문의 대응을 위한 EXO Help입니다. 문의 또는 도움이 필요하신 분은 이곳으로 메시지를 보내주시면 자동으로 담당자와의 1:1채팅이 시작됩니다.'
-                        );
-                    }
-                }
-            }
+            // Welcome message is now handled by Freshchat channel settings
+            // No need for duplicate welcome message from the bot
+            // Other conversationUpdate events (e.g., bot/member removal) are intentionally
+            // not handled in this implementation as they don't require special action
+            console.log('[Bot] conversationUpdate event received:', {
+                membersAdded: context.activity.membersAdded?.length || 0,
+                membersRemoved: context.activity.membersRemoved?.length || 0
+            });
         }
     });
 };
