@@ -2420,14 +2420,75 @@ const processBotRequest = async (req, res) => {
         if (context.activity.type === 'message') {
             await handleTeamsMessage(context);
         } else if (context.activity.type === 'conversationUpdate') {
-            // Welcome message is now handled by Freshchat channel settings
-            // No need for duplicate welcome message from the bot
-            // Other conversationUpdate events (e.g., bot/member removal) are intentionally
-            // not handled in this implementation as they don't require special action
-            console.log('[Bot] conversationUpdate event received:', {
-                membersAdded: context.activity.membersAdded?.length || 0,
-                membersRemoved: context.activity.membersRemoved?.length || 0
-            });
+            // Proactively create Freshchat conversation when user opens chat
+            // This triggers Freshchat's channel welcome message to be sent
+            if (context.activity.membersAdded) {
+                for (const member of context.activity.membersAdded) {
+                    // Only process when a real user (not the bot itself) joins
+                    if (member.id !== context.activity.recipient.id) {
+                        console.log('[Bot] User joined conversation:', member.id);
+
+                        try {
+                            const activity = context.activity;
+                            const teamsConvId = activity.conversation.id;
+
+                            // Check if mapping already exists
+                            const existingMapping = conversationMap.get(teamsConvId);
+                            if (existingMapping) {
+                                console.log('[Bot] Conversation mapping already exists, skipping');
+                                continue;
+                            }
+
+                            // Collect user profile
+                            const userProfile = await collectTeamsUserProfile(context);
+
+                            // Create Freshchat conversation with null message to trigger welcome message
+                            const freshchatConv = await freshchatClient.createConversation(
+                                member.id,
+                                member.name || activity.from?.name || 'Teams User',
+                                null, // null triggers Freshchat channel welcome message
+                                [],
+                                userProfile
+                            );
+
+                            const freshchatConversationGuid = freshchatConv?.conversation_id
+                                ? String(freshchatConv.conversation_id)
+                                : null;
+
+                            const freshchatConversationNumericId = freshchatConv?.freshchat_conversation_id
+                                ? String(freshchatConv.freshchat_conversation_id)
+                                : null;
+
+                            if (!freshchatConversationGuid && !freshchatConversationNumericId) {
+                                throw new Error('Freshchat API response is missing conversation identifiers');
+                            }
+
+                            // Create conversation mapping
+                            updateConversationMapping(teamsConvId, {
+                                freshchatConversationGuid,
+                                freshchatConversationNumericId,
+                                freshchatUserId: freshchatConv.user_id,
+                                conversationReference: TurnContext.getConversationReference(activity)
+                            });
+
+                            console.log(`[Bot] Proactive conversation created: Teams(${teamsConvId}) ↔ Freshchat(${freshchatConversationGuid || freshchatConversationNumericId})`);
+
+                            // Store Teams conversation ID in Freshchat user properties
+                            freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId)
+                                .catch(err => console.warn('[Freshchat] Background profile update failed:', err.message));
+
+                        } catch (error) {
+                            console.error('[Bot] Failed to create proactive conversation:', error.message);
+                            // Don't throw - fallback to creating conversation on first message
+                        }
+                    }
+                }
+            }
+
+            // Log member removal events
+            if (context.activity.membersRemoved) {
+                console.log('[Bot] Members removed:', context.activity.membersRemoved.length);
+            }
         }
     });
 };
@@ -2867,34 +2928,44 @@ app.post('/freshchat/webhook', async (req, res) => {
             await adapter.continueConversation(
                 mapping.conversationReference,
                 async (turnContext) => {
-                    // Get agent name if actor is an agent
-                    let actorLabel;
+                    // Get agent name for the message sender (appears in Teams as sender name)
+                    let senderName;
                     if (actorType === 'agent' && message.actor_id) {
-                        actorLabel = await freshchatClient.getAgentName(message.actor_id);
+                        senderName = await freshchatClient.getAgentName(message.actor_id);
                     } else {
                         const actorLabelMap = { agent: '지원팀', system: 'EXO Help', bot: '봇 메시지' };
-                        actorLabel = actorLabelMap[actorType] || 'Freshchat Update';
+                        senderName = actorLabelMap[actorType] || 'Freshchat Update';
                     }
 
-                    let composedText = `**${actorLabel}:**`;
+                    // Compose message text without agent name prefix
+                    let composedText = '';
 
                     if (messageText) {
-                        composedText += `\n${messageText}`;
+                        composedText = messageText;
                     }
 
                     if (attachmentLinks.length > 0) {
-                        composedText += `\n\n${attachmentLinks.join('\n')}`;
+                        composedText = composedText
+                            ? `${composedText}\n\n${attachmentLinks.join('\n')}`
+                            : attachmentLinks.join('\n');
                     }
 
-                    // Send text message first
-                    if (composedText !== `**${actorLabel}:**`) {
-                        await turnContext.sendActivity(composedText);
+                    // Send text message with sender name in activity
+                    if (composedText) {
+                        await turnContext.sendActivity({
+                            type: 'message',
+                            text: composedText,
+                            from: { name: senderName }
+                        });
                     }
 
-                    // Send file cards separately
+                    // Send file cards separately with sender name
                     if (fileCards.length > 0) {
                         for (const card of fileCards) {
-                            await turnContext.sendActivity({ attachments: [card] });
+                            await turnContext.sendActivity({
+                                attachments: [card],
+                                from: { name: senderName }
+                            });
                         }
                     }
                 }
