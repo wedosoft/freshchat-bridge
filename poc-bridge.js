@@ -37,6 +37,8 @@ const FRESHCHAT_API_URL = process.env.FRESHCHAT_API_URL;
 const FRESHCHAT_INBOX_ID = process.env.FRESHCHAT_INBOX_ID;
 const FRESHCHAT_WEBHOOK_PUBLIC_KEY = process.env.FRESHCHAT_WEBHOOK_PUBLIC_KEY;
 const FRESHCHAT_WEBHOOK_SIGNATURE_STRICT = process.env.FRESHCHAT_WEBHOOK_SIGNATURE_STRICT !== 'false';
+const FRESHSALES_API_KEY = process.env.FRESHSALES_API_KEY;
+const FRESHSALES_API_URL = process.env.FRESHSALES_API_URL;
 const PUBLIC_URL = process.env.PUBLIC_URL;
 const CUSTOM_GREETING_MESSAGE = (process.env.CUSTOM_GREETING_MESSAGE || '').trim();
 const CUSTOM_GREETING_ENABLED = process.env.CUSTOM_GREETING_ENABLED === 'true'
@@ -487,6 +489,85 @@ adapter.onTurnError = async (context, error) => {
 // ============================================================================
 // Freshchat API Client
 // ============================================================================
+// ============================================
+// Freshsales CRM Client (Contact Management)
+// ============================================
+class FreshsalesClient {
+    constructor(apiKey, apiUrl) {
+        this.apiKey = apiKey;
+        this.apiUrl = apiUrl;
+        this.axiosInstance = axios.create({
+            baseURL: apiUrl,
+            headers: {
+                'Authorization': `Token token=${apiKey}`,
+                'Content-Type': 'application/json'
+            }
+        });
+    }
+
+    /**
+     * Upsert contact by email (create if not exists, update if exists)
+     * Uses Freshsales Upsert API: POST /api/contacts/upsert
+     * Maps Teams profile to Freshsales standard fields:
+     * - job_title: jobTitle
+     * - department: department
+     * - mobile_number: mobilePhone
+     * - work_number: officePhone
+     * - address: officeLocation
+     * @param {string} email - User email (unique identifier)
+     * @param {Object} contactData - Contact data to upsert
+     * @returns {Object} Contact object from Freshsales
+     */
+    async upsertContact(email, contactData) {
+        try {
+            console.log(`[Freshsales] Upserting contact for email: ${email}`);
+            console.log('[Freshsales] Contact data:', JSON.stringify(contactData, null, 2));
+
+            // Build contact payload with standard fields only
+            const contact = {
+                email: contactData.email,
+                first_name: contactData.first_name || 'Teams User'
+            };
+
+            // Add standard fields if provided
+            if (contactData.job_title) {
+                contact.job_title = contactData.job_title;
+            }
+            if (contactData.department) {
+                contact.department = contactData.department;
+            }
+            if (contactData.mobile_number) {
+                contact.mobile_number = contactData.mobile_number;
+            }
+            if (contactData.work_number) {
+                contact.work_number = contactData.work_number;
+            }
+            if (contactData.address) {
+                contact.address = contactData.address;
+            }
+
+            const payload = {
+                unique_identifier: {
+                    emails: email
+                },
+                contact: contact
+            };
+
+            const response = await this.axiosInstance.post('/contacts/upsert', payload);
+            console.log('[Freshsales] Upsert successful:', JSON.stringify(response.data, null, 2));
+            return response.data;
+        } catch (error) {
+            console.error('[Freshsales] Upsert failed:', {
+                email,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                data: error.response?.data,
+                message: error.message
+            });
+            throw error;
+        }
+    }
+}
 
 class FreshchatClient {
     constructor(apiKey, apiUrl, inboxId) {
@@ -555,12 +636,12 @@ class FreshchatClient {
     /**
      * Create a new conversation in Freshchat
      */
-    async createConversation(userId, userName, initialMessage, attachments = [], userProfile = {}) {
+    async createConversation(userId, userName, initialMessage, attachments = []) {
         try {
             console.log(`[Freshchat] Creating conversation for user: ${userName}`);
 
-            // First, create or get user with profile information
-            const user = await this.createOrGetUser(userId, userName, userProfile);
+            // Get or create basic Freshchat user (profile managed separately via Freshsales)
+            const user = await this.getOrCreateBasicUser(userId, userName);
 
             const messageParts = buildFreshchatMessageParts(initialMessage, attachments);
             if (messageParts.length === 0) {
@@ -600,9 +681,9 @@ class FreshchatClient {
     }
 
     /**
-     * Create or get a Freshchat user with Teams profile information
+     * Get or create a basic Freshchat user (minimal info, profile managed in Freshsales)
      */
-    async createOrGetUser(externalId, name, userProfile = {}) {
+    async getOrCreateBasicUser(externalId, name) {
         try {
             // Try to get existing user
             const response = await this.axiosInstance.get(`/users/lookup`, {
@@ -611,16 +692,6 @@ class FreshchatClient {
 
             if (response.data && response.data.id) {
                 console.log(`[Freshchat] Found existing user: ${response.data.id}`);
-
-                // Update user properties with latest profile info
-                if (Object.keys(userProfile).length > 0) {
-                    try {
-                        await this.updateUserProfile(response.data.id, userProfile);
-                    } catch (updateError) {
-                        console.error('[Freshchat] Failed to update user profile:', updateError.message);
-                    }
-                }
-
                 return response.data;
             }
         } catch (error) {
@@ -631,134 +702,20 @@ class FreshchatClient {
         // Use fallback name if name is empty or undefined
         const userName = name && name.trim() ? name.trim() : 'Teams User';
 
-        // Build user properties
-        const properties = [
-            {
-                name: 'source',
-                value: 'Microsoft Teams'
-            }
-        ];
-
-        // Add Teams profile information to properties
-        if (userProfile.email) {
-            properties.push({ name: 'teams_email', value: userProfile.email });
-        }
-        if (userProfile.jobTitle) {
-            properties.push({ name: 'job_title', value: userProfile.jobTitle });  // 직함
-        }
-        if (userProfile.department) {
-            properties.push({ name: 'cf_field3632', value: userProfile.department });  // 부서
-        }
-        if (userProfile.officePhone) {
-            properties.push({ name: 'work_number', value: userProfile.officePhone });  // 직장 전화
-        }
-        if (userProfile.mobilePhone) {
-            properties.push({ name: 'mobile_number', value: userProfile.mobilePhone });  // 휴대폰
-        }
-        if (userProfile.officeLocation) {
-            properties.push({ name: 'cf_field480', value: userProfile.officeLocation });  // 회사위치
-        }
-        if (userProfile.displayName) {
-            properties.push({ name: 'teams_display_name', value: userProfile.displayName });
-        }
-
-        // Create new user
+        // Create new user with minimal info
         const createResponse = await this.axiosInstance.post('/users', {
             reference_id: externalId,
             first_name: userName,
-            email: userProfile.email || undefined,
-            phone: userProfile.mobilePhone || userProfile.officePhone || undefined,  // 기본 전화번호 필드
-            properties: properties
+            properties: [
+                {
+                    name: 'source',
+                    value: 'Microsoft Teams'
+                }
+            ]
         });
 
         console.log(`[Freshchat] User created: ${createResponse.data.id}`);
-        console.log(`[Freshchat] User properties:`, properties.map(p => `${p.name}: ${p.value}`).join(', '));
         return createResponse.data;
-    }
-
-    /**
-     * Update user profile with Teams information
-     * Merges with existing properties to preserve teams_conversation_id
-     */
-    async updateUserProfile(userId, userProfile) {
-        try {
-            // Fetch existing user to preserve all properties
-            let existingProperties = [];
-            try {
-                const existingUserResponse = await this.axiosInstance.get(`/users/${userId}`);
-                existingProperties = existingUserResponse.data.properties || [];
-            } catch (getUserError) {
-                // If user doesn't exist (404) or read fails, proceed with empty properties
-                console.warn(`[Freshchat] Could not fetch existing user ${userId}:`, getUserError.response?.status || getUserError.message);
-            }
-
-            // Build updated properties
-            const updates = [
-                { name: 'source', value: 'Microsoft Teams' }
-            ];
-
-            if (userProfile.email) {
-                updates.push({ name: 'teams_email', value: userProfile.email });
-            }
-            if (userProfile.jobTitle) {
-                updates.push({ name: 'job_title', value: userProfile.jobTitle });  // 직함
-            }
-            if (userProfile.department) {
-                updates.push({ name: 'cf_field3632', value: userProfile.department });  // 부서
-            }
-            if (userProfile.officePhone) {
-                updates.push({ name: 'work_number', value: userProfile.officePhone });  // 직장 전화
-            }
-            if (userProfile.mobilePhone) {
-                updates.push({ name: 'mobile_number', value: userProfile.mobilePhone });  // 휴대폰
-            }
-            if (userProfile.officeLocation) {
-                updates.push({ name: 'cf_field480', value: userProfile.officeLocation });  // 회사위치
-            }
-            if (userProfile.displayName) {
-                updates.push({ name: 'teams_display_name', value: userProfile.displayName });
-            }
-
-            console.log('[Freshchat] Properties to update:', JSON.stringify(updates, null, 2));
-
-            // Check if any property has changed
-            const existingMap = new Map(existingProperties.map(p => [p.name, p.value]));
-            console.log('[Freshchat] Existing properties map:', JSON.stringify(Array.from(existingMap.entries()), null, 2));
-            
-            const hasChanges = updates.some(update => {
-                const existingValue = existingMap.get(update.name);
-                const changed = existingValue !== update.value;
-                if (changed) {
-                    console.log(`[Freshchat] Property "${update.name}" changed: "${existingValue}" -> "${update.value}"`);
-                }
-                return changed;
-            });
-
-            console.log(`[Freshchat] hasChanges: ${hasChanges}`);
-
-            if (!hasChanges) {
-                console.log(`[Freshchat] User ${userId} profile unchanged, skipping update`);
-                return;
-            }
-
-            // Merge: preserve existing properties not being updated
-            const propertyMap = new Map();
-            existingProperties.forEach(prop => propertyMap.set(prop.name, prop.value));
-            updates.forEach(prop => propertyMap.set(prop.name, prop.value));
-
-            const mergedProperties = Array.from(propertyMap.entries()).map(([name, value]) => ({
-                name,
-                value
-            }));
-
-            await this.axiosInstance.put(`/users/${userId}`, {
-                properties: mergedProperties
-            });
-
-            console.log(`[Freshchat] User ${userId} profile updated with Teams information`);
-        } catch (error) {
-            console.error(`[Freshchat] Failed to update user profile:`, error.response?.data || error.message);
-        }
     }
 
     /**
@@ -1115,6 +1072,7 @@ class FreshchatClient {
 }
 
 const freshchatClient = new FreshchatClient(FRESHCHAT_API_KEY, FRESHCHAT_API_URL, FRESHCHAT_INBOX_ID);
+const freshsalesClient = new FreshsalesClient(FRESHSALES_API_KEY, FRESHSALES_API_URL);
 
 // ============================================================================
 // Webhook Signature Verification
@@ -1766,9 +1724,26 @@ async function handleTeamsMessage(context) {
             return;
         }
 
+        // Sync Teams user profile to Freshsales Contact (always, regardless of conversation state)
+        const userProfile = await collectTeamsUserProfile(context);
+        if (userProfile.email) {
+            try {
+                await freshsalesClient.upsertContact(userProfile.email, {
+                    email: userProfile.email,
+                    first_name: activity.from.name || 'Teams User',
+                    job_title: userProfile.jobTitle || null,
+                    department: userProfile.department || null,
+                    mobile_number: userProfile.mobilePhone || null,
+                    work_number: userProfile.officePhone || null,
+                    address: userProfile.officeLocation || null  // 회사 위치 → address 필드
+                });
+            } catch (freshsalesError) {
+                console.error('[Freshsales] Contact upsert failed:', freshsalesError.message);
+            }
+        }
+
         if (!mapping) {
-            // First message in this conversation - collect user profile and create new Freshchat conversation
-            const userProfile = await collectTeamsUserProfile(context);
+            // First message in this conversation - create new Freshchat conversation
             const initialMessage = hasTextContent ? messageText : null;
 
             const freshchatConv = await freshchatClient.createConversation(
@@ -1776,7 +1751,7 @@ async function handleTeamsMessage(context) {
                 activity.from.name,
                 initialMessage,
                 freshchatAttachments,
-                userProfile
+                {}  // No longer passing userProfile to createConversation
             );
 
             const freshchatConversationGuid = freshchatConv?.conversation_id
@@ -1808,13 +1783,7 @@ async function handleTeamsMessage(context) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
             }
         } else {
-            // Update user profile even for existing conversations (cached profile is OK)
-            const userProfile = await collectTeamsUserProfile(context);
-            await freshchatClient.createOrGetUser(
-                activity.from.id,
-                activity.from.name,
-                userProfile
-            );
+            // Existing conversation - no additional Freshchat user update needed (Freshsales handles it above)
 
             const candidateConversations = [];
             const guidConversationId = mapping.freshchatConversationGuid

@@ -111,7 +111,9 @@ async function verifySetup() {
         'BOT_APP_PASSWORD',
         'FRESHCHAT_API_KEY',
         'FRESHCHAT_API_URL',
-        'FRESHCHAT_INBOX_ID'
+        'FRESHCHAT_INBOX_ID',
+        'FRESHSALES_API_KEY',
+        'FRESHSALES_API_URL'
     ];
 
     for (const envVar of requiredEnvVars) {
@@ -125,8 +127,40 @@ async function verifySetup() {
         }
     }
 
-    // 5. Check Freshchat API connectivity
-    log('\n[5/10] Testing Freshchat API connection...', blue);
+    // 5. Check Freshsales CRM API connectivity
+    log('\n[5/10] Testing Freshsales CRM API connection...', blue);
+    const freshsalesApiKey = process.env.FRESHSALES_API_KEY;
+    const freshsalesApiUrl = process.env.FRESHSALES_API_URL;
+
+    if (freshsalesApiKey && freshsalesApiUrl && !freshsalesApiKey.includes('your-')) {
+        try {
+            const normalizedFreshsalesApiUrl = freshsalesApiUrl.replace(/\/$/, '');
+            const response = await axios.get(`${normalizedFreshsalesApiUrl}/contacts/filters`, {
+                headers: {
+                    'Authorization': `Token token=${freshsalesApiKey}`,
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000
+            });
+
+            if (response.status === 200) {
+                checkPassed('Freshsales CRM API connection successful');
+            }
+        } catch (error) {
+            if (error.response) {
+                checkFailed('Freshsales CRM API', `HTTP ${error.response.status}: ${error.response.statusText}`);
+            } else if (error.code === 'ECONNABORTED') {
+                checkFailed('Freshsales CRM API', 'Connection timeout');
+            } else {
+                checkFailed('Freshsales CRM API', error.message);
+            }
+        }
+    } else {
+        checkWarning('Freshsales CRM API', 'Cannot test - API key not configured');
+    }
+
+    // 6. Check Freshchat API connectivity (messaging only)
+    log('\n[6/10] Testing Freshchat API connection...', blue);
     const freshchatApiKey = process.env.FRESHCHAT_API_KEY;
     const freshchatApiUrl = process.env.FRESHCHAT_API_URL;
 
@@ -162,8 +196,8 @@ async function verifySetup() {
         checkWarning('Freshchat API', 'Cannot test - API key not configured');
     }
 
-    // 6. Check Teams manifest
-    log('\n[6/10] Checking Teams app manifest...', blue);
+    // 7. Check Teams manifest
+    log('\n[7/10] Checking Teams app manifest...', blue);
     const manifestPath = path.join(__dirname, 'teams-app', 'manifest.json');
 
     if (fs.existsSync(manifestPath)) {
@@ -194,8 +228,8 @@ async function verifySetup() {
         checkFailed('manifest.json', 'Not found in teams-app directory');
     }
 
-    // 7. Check Teams app icons
-    log('\n[7/10] Checking Teams app icons...', blue);
+    // 8. Check Teams app icons
+    log('\n[8/10] Checking Teams app icons...', blue);
     const colorIconPath = path.join(__dirname, 'teams-app', 'color.png');
     const outlineIconPath = path.join(__dirname, 'teams-app', 'outline.png');
 
@@ -221,8 +255,8 @@ async function verifySetup() {
         checkWarning('outline.png', 'Not found. Create 32x32 icon');
     }
 
-    // 8. Check Teams app package
-    log('\n[8/10] Checking Teams app package...', blue);
+    // 9. Check Teams app package
+    log('\n[9/10] Checking Teams app package...', blue);
     const appPackagePath = path.join(__dirname, 'teams-app', 'teams-freshchat-bot.zip');
 
     if (fs.existsSync(appPackagePath)) {
@@ -231,8 +265,8 @@ async function verifySetup() {
         checkWarning('App package', 'teams-freshchat-bot.zip not found. Run: cd teams-app && zip -r teams-freshchat-bot.zip manifest.json color.png outline.png');
     }
 
-    // 9. Check if ngrok is installed
-    log('\n[9/10] Checking ngrok installation...', blue);
+    // 10. Check if ngrok is installed
+    log('\n[10/10] Checking ngrok installation...', blue);
     try {
         const { execSync } = require('child_process');
         const ngrokVersion = execSync('ngrok version', { encoding: 'utf8' }).trim();
@@ -241,8 +275,8 @@ async function verifySetup() {
         checkWarning('ngrok', 'Not found in PATH. Install from: https://ngrok.com/download');
     }
 
-    // 10. Check if port 3978 is available
-    log('\n[10/10] Checking port availability...', blue);
+    // 11. Check if port 3978 is available
+    log('\n[11/10] Checking port availability...', blue);
     const net = require('net');
     const port = process.env.PORT || 3978;
 
