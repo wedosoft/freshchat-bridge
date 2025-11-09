@@ -643,19 +643,19 @@ class FreshchatClient {
             properties.push({ name: 'teams_email', value: userProfile.email });
         }
         if (userProfile.jobTitle) {
-            properties.push({ name: 'teams_job_title', value: userProfile.jobTitle });
+            properties.push({ name: 'job_title', value: userProfile.jobTitle });  // 직함
         }
         if (userProfile.department) {
-            properties.push({ name: 'teams_department', value: userProfile.department });
+            properties.push({ name: 'cf_field3632', value: userProfile.department });  // 부서
         }
         if (userProfile.officePhone) {
-            properties.push({ name: 'teams_office_phone', value: userProfile.officePhone });
+            properties.push({ name: 'work_number', value: userProfile.officePhone });  // 직장 전화
         }
         if (userProfile.mobilePhone) {
-            properties.push({ name: 'teams_mobile_phone', value: userProfile.mobilePhone });
+            properties.push({ name: 'mobile_number', value: userProfile.mobilePhone });  // 휴대폰
         }
         if (userProfile.officeLocation) {
-            properties.push({ name: 'teams_office_location', value: userProfile.officeLocation });
+            properties.push({ name: 'cf_field480', value: userProfile.officeLocation });  // 회사위치
         }
         if (userProfile.displayName) {
             properties.push({ name: 'teams_display_name', value: userProfile.displayName });
@@ -666,6 +666,7 @@ class FreshchatClient {
             reference_id: externalId,
             first_name: userName,
             email: userProfile.email || undefined,
+            phone: userProfile.mobilePhone || userProfile.officePhone || undefined,  // 기본 전화번호 필드
             properties: properties
         });
 
@@ -699,19 +700,19 @@ class FreshchatClient {
                 updates.push({ name: 'teams_email', value: userProfile.email });
             }
             if (userProfile.jobTitle) {
-                updates.push({ name: 'teams_job_title', value: userProfile.jobTitle });
+                updates.push({ name: 'job_title', value: userProfile.jobTitle });  // 직함
             }
             if (userProfile.department) {
-                updates.push({ name: 'teams_department', value: userProfile.department });
+                updates.push({ name: 'cf_field3632', value: userProfile.department });  // 부서
             }
             if (userProfile.officePhone) {
-                updates.push({ name: 'teams_office_phone', value: userProfile.officePhone });
+                updates.push({ name: 'work_number', value: userProfile.officePhone });  // 직장 전화
             }
             if (userProfile.mobilePhone) {
-                updates.push({ name: 'teams_mobile_phone', value: userProfile.mobilePhone });
+                updates.push({ name: 'mobile_number', value: userProfile.mobilePhone });  // 휴대폰
             }
             if (userProfile.officeLocation) {
-                updates.push({ name: 'teams_office_location', value: userProfile.officeLocation });
+                updates.push({ name: 'cf_field480', value: userProfile.officeLocation });  // 회사위치
             }
             if (userProfile.displayName) {
                 updates.push({ name: 'teams_display_name', value: userProfile.displayName });
