@@ -1975,7 +1975,20 @@ async function handleTeamsMessage(context) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
             }
         } else {
-            // Existing conversation - no additional Freshchat user update needed (Freshsales handles it above)
+            // Existing conversation - Update Freshchat user profile with latest Teams info
+            if (mapping.freshchatUserId && userProfile.email) {
+                try {
+                    console.log(`[Freshchat] Updating existing user profile: ${mapping.freshchatUserId}`);
+                    await freshchatClient.updateUserProfile(
+                        mapping.freshchatUserId,
+                        activity.from.name,
+                        userProfile.email,
+                        userProfile
+                    );
+                } catch (updateError) {
+                    console.warn('[Freshchat] Failed to update user profile:', updateError.message);
+                }
+            }
 
             const candidateConversations = [];
             const guidConversationId = mapping.freshchatConversationGuid
