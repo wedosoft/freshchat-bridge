@@ -2154,6 +2154,10 @@ app.get('/tab-config', (req, res) => {
  */
 app.get('/tab-content', async (req, res) => {
     try {
+        // Allow iframe embedding in Teams
+        res.setHeader('Content-Security-Policy', "frame-ancestors teams.microsoft.com *.teams.microsoft.com *.skype.com");
+        res.setHeader('X-Frame-Options', 'ALLOW-FROM https://teams.microsoft.com');
+        
         const htmlContent = await getHelpTabContent();
         res.send(htmlContent);
     } catch (error) {
