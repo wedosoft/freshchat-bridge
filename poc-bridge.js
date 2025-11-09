@@ -465,7 +465,9 @@ function isSkippableTeamsAttachment(contentType) {
 const adapter = new BotFrameworkAdapter({
     appId: BOT_APP_ID,
     appPassword: BOT_APP_PASSWORD,
-    channelAuthTenant: BOT_TENANT_ID
+    // For MultiTenant bots, use 'organizations' instead of 'common' for Bot Framework authentication
+    // Graph API calls use the actual tenant ID from the activity
+    channelAuthTenant: BOT_TENANT_ID === 'common' ? 'organizations' : BOT_TENANT_ID
 });
 
 // Error handler
