@@ -1789,6 +1789,14 @@ async function handleTeamsMessage(context) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
             }
         } else {
+            // Update user profile even for existing conversations (cached profile is OK)
+            const userProfile = await collectTeamsUserProfile(context);
+            await freshchatClient.createOrGetUser(
+                activity.from.id,
+                activity.from.name,
+                userProfile
+            );
+
             const candidateConversations = [];
             const guidConversationId = mapping.freshchatConversationGuid
                 ? String(mapping.freshchatConversationGuid)
