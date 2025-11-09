@@ -1982,7 +1982,21 @@ async function fetchHelpTabFromSharePoint(fileUrl) {
             // SharePoint sharing links with embed or view
             else if (fileUrl.includes('sharepoint.com') && (fileUrl.includes('/:') || fileUrl.includes('/_layouts/'))) {
                 // Try to convert to download URL
-                downloadUrl = fileUrl.replace('/:w:/', '/download/').replace('/_layouts/15/Doc.aspx?', '/download?');
+                // Handle :u: (upload/shared), :w: (word), :x: (excel), etc.
+                downloadUrl = fileUrl
+                    .replace(/\/:u:\//, '/:u:/')  // Keep :u: format
+                    .replace(/\/:w:\//, '/download/')
+                    .replace(/\/:x:\//, '/download/')
+                    .replace(/\/:p:\//, '/download/')
+                    .replace('/_layouts/15/Doc.aspx?', '/download?');
+                
+                // For :u: links, add download parameter
+                if (fileUrl.includes('/:u:/')) {
+                    const urlObj = new URL(downloadUrl);
+                    urlObj.searchParams.set('download', '1');
+                    downloadUrl = urlObj.toString();
+                }
+                
                 console.log(`[Help Tab] Converted SharePoint share link to download URL: ${downloadUrl}`);
             }
 
