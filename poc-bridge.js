@@ -2814,7 +2814,14 @@ app.post('/freshchat/webhook', async (req, res) => {
                         await turnContext.sendActivity({
                             type: 'message',
                             text: composedText,
-                            from: { name: senderName }
+                            from: {
+                                id: turnContext.activity.recipient.id,
+                                name: senderName
+                            },
+                            timestamp: new Date().toISOString(),
+                            channelData: {
+                                clientActivityId: `${Date.now()}-${Math.random()}`
+                            }
                         });
                     }
 
@@ -2823,7 +2830,14 @@ app.post('/freshchat/webhook', async (req, res) => {
                         for (const card of fileCards) {
                             await turnContext.sendActivity({
                                 attachments: [card],
-                                from: { name: senderName }
+                                from: {
+                                    id: turnContext.activity.recipient.id,
+                                    name: senderName
+                                },
+                                timestamp: new Date().toISOString(),
+                                channelData: {
+                                    clientActivityId: `${Date.now()}-${Math.random()}`
+                                }
                             });
                         }
                     }
