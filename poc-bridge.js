@@ -723,10 +723,18 @@ class FreshchatClient {
 
             // Check if any property has changed
             const existingMap = new Map(existingProperties.map(p => [p.name, p.value]));
+            console.log('[Freshchat] Existing properties map:', JSON.stringify(Array.from(existingMap.entries()), null, 2));
+            
             const hasChanges = updates.some(update => {
                 const existingValue = existingMap.get(update.name);
-                return existingValue !== update.value;
+                const changed = existingValue !== update.value;
+                if (changed) {
+                    console.log(`[Freshchat] Property "${update.name}" changed: "${existingValue}" -> "${update.value}"`);
+                }
+                return changed;
             });
+
+            console.log(`[Freshchat] hasChanges: ${hasChanges}`);
 
             if (!hasChanges) {
                 console.log(`[Freshchat] User ${userId} profile unchanged, skipping update`);
