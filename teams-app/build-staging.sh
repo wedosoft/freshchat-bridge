@@ -22,6 +22,10 @@ fi
 
 cp manifest.staging.json "$TEMP_DIR/manifest.json"
 
+# manifest에서 버전 추출
+VERSION=$(grep -o '"version": "[^"]*"' manifest.staging.json | cut -d'"' -f4)
+echo "📦 Version: $VERSION"
+
 # 아이콘 파일 복사
 if [ -f "color.png" ]; then
     cp color.png "$TEMP_DIR/"
@@ -37,7 +41,7 @@ fi
 
 # ZIP 파일 생성
 cd "$TEMP_DIR"
-PACKAGE_NAME="freshchat-bridge-staging.zip"
+PACKAGE_NAME="exohelp-staging-v${VERSION}.zip"
 zip -r "../$PACKAGE_NAME" ./*
 
 cd ..

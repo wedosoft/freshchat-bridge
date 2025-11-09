@@ -37,11 +37,6 @@ const CUSTOM_GREETING_MESSAGE = (process.env.CUSTOM_GREETING_MESSAGE || '').trim
 const CUSTOM_GREETING_ENABLED = process.env.CUSTOM_GREETING_ENABLED === 'true'
     && CUSTOM_GREETING_MESSAGE.length > 0;
 
-// Help Tab Configuration
-const HELP_TAB_SOURCE = process.env.HELP_TAB_SOURCE || 'local'; // 'local' | 'sharepoint' | 'onedrive'
-const HELP_TAB_FILE_URL = process.env.HELP_TAB_FILE_URL; // SharePoint/OneDrive file URL
-const HELP_TAB_CACHE_TTL = parseInt(process.env.HELP_TAB_CACHE_TTL || '300000'); // 5 minutes default
-
 // ============================================================================
 // File Storage Setup
 // ============================================================================
@@ -83,7 +78,6 @@ const userProfileCache = new Map();
  * Cache for help tab content
  * Structure: { content: string, timestamp: number }
  */
-let helpTabCache = null;
 const USER_PROFILE_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function cleanupProcessedFreshchatMessages() {
@@ -1939,184 +1933,14 @@ async function getGraphAccessToken() {
  * Fetch HTML content from SharePoint or OneDrive
  * Supports both authenticated Graph API access and public share links
  */
-async function fetchHelpTabFromSharePoint(fileUrl) {
-    try {
-        console.log(`[Help Tab] Fetching from SharePoint/OneDrive: ${fileUrl}`);
-
-        // Check if this is a public share link (OneDrive or SharePoint)
-        // Disabled: Always use Graph API for security
-        const isPublicShareLink = false;
-        /*
-        const isPublicShareLink = fileUrl.includes('1drv.ms') ||
-                                  fileUrl.includes('onedrive.live.com') ||
-                                  fileUrl.includes('sharepoint.com/:') ||
-                                  fileUrl.includes('sharepoint.com/_layouts/') ||
-                                  fileUrl.match(/\?sharingv2/i);
-        */
-
-        if (isPublicShareLink) {
-            console.log('[Help Tab] Detected public share link, fetching directly without authentication');
-
-            // For public share links, try direct download
-            let downloadUrl = fileUrl;
-
-            // Convert embed URLs to download URLs
-            if (fileUrl.includes('onedrive.live.com/embed')) {
-                // Extract resid and authkey from embed URL
-                const urlObj = new URL(fileUrl);
-                const resid = urlObj.searchParams.get('resid');
-                const authkey = urlObj.searchParams.get('authkey');
-                if (resid && authkey) {
-                    downloadUrl = `https://onedrive.live.com/download?resid=${resid}&authkey=${authkey}`;
-                    console.log(`[Help Tab] Converted embed URL to download URL: ${downloadUrl}`);
-                }
-            }
-            // Convert shortened 1drv.ms links - these need to be followed to get the actual URL
-            else if (fileUrl.includes('1drv.ms')) {
-                console.log('[Help Tab] Following shortened OneDrive link...');
-                const redirectResponse = await axios.get(fileUrl, {
-                    maxRedirects: 0,
-                    validateStatus: (status) => status === 302 || status === 301
-                });
-                const location = redirectResponse.headers.location;
-                if (location) {
-                    downloadUrl = location.replace('/view.aspx?', '/download.aspx?');
-                    console.log(`[Help Tab] Resolved to: ${downloadUrl}`);
-                }
-            }
-            // SharePoint sharing links with embed or view
-            else if (fileUrl.includes('sharepoint.com') && (fileUrl.includes('/:') || fileUrl.includes('/_layouts/'))) {
-                // Try to convert to download URL
-                // Handle :u: (upload/shared), :w: (word), :x: (excel), etc.
-                downloadUrl = fileUrl
-                    .replace(/\/:u:\//, '/:u:/')  // Keep :u: format
-                    .replace(/\/:w:\//, '/download/')
-                    .replace(/\/:x:\//, '/download/')
-                    .replace(/\/:p:\//, '/download/')
-                    .replace('/_layouts/15/Doc.aspx?', '/download?');
-                
-                // For :u: links, add download parameter
-                if (fileUrl.includes('/:u:/')) {
-                    const urlObj = new URL(downloadUrl);
-                    urlObj.searchParams.set('download', '1');
-                    downloadUrl = urlObj.toString();
-                }
-                
-                console.log(`[Help Tab] Converted SharePoint share link to download URL: ${downloadUrl}`);
-            }
-
-            // Fetch the content directly
-            const response = await axios.get(downloadUrl, {
-                responseType: 'text',
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (compatible; TeamsBot/1.0)'
-                }
-            });
-
-            console.log(`[Help Tab] Successfully fetched public content (${response.data.length} bytes)`);
-            return response.data;
-        }
-
-        // Not a public link - use Graph API authentication
-        console.log('[Help Tab] Using Graph API authentication for private file');
-        const accessToken = await getGraphAccessToken();
-
-        const shareLinkPattern = /\.sharepoint\.com\/:/i;
-
-        let graphUrl = null;
-        if (shareLinkPattern.test(fileUrl)) {
-            // For SharePoint/OneDrive sharing links, leverage the Graph shares API
-            const encodedShareUrl = Buffer.from(fileUrl)
-                .toString('base64')
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_')
-                .replace(/=+$/g, '');
-
-            graphUrl = `https://graph.microsoft.com/v1.0/shares/u!${encodedShareUrl}/driveItem/content`;
-            console.log('[Help Tab] Resolved share link via Graph shares API');
-        }
-
-        if (!graphUrl) {
-            // Parse SharePoint/OneDrive URL to extract site and file path
-            // URL format: https://{tenant}.sharepoint.com/sites/{siteName}/Shared Documents/{filePath}
-            // or: https://{tenant}-my.sharepoint.com/personal/{user}/Documents/{filePath}
-
-            const url = new URL(fileUrl);
-            const pathParts = url.pathname.split('/').filter(p => p);
-
-            if (url.hostname.includes('-my.sharepoint.com')) {
-                // OneDrive personal
-                const filePath = pathParts.slice(3).join('/'); // Skip 'Documents'
-                graphUrl = `https://graph.microsoft.com/v1.0/users/${pathParts[1]}/drive/root:/${filePath}:/content`;
-            } else {
-                // SharePoint site
-                const siteName = pathParts[1]; // sites/{siteName}
-                const filePath = pathParts.slice(3).join('/'); // Skip 'Shared Documents'
-                const hostname = url.hostname.split('.')[0]; // Extract tenant name
-                graphUrl = `https://graph.microsoft.com/v1.0/sites/${hostname}.sharepoint.com:/sites/${siteName}:/drive/root:/${filePath}:/content`;
-            }
-
-            console.log(`[Help Tab] Graph API URL: ${graphUrl}`);
-        }
-
-        const response = await axios.get(graphUrl, {
-            responseType: 'arraybuffer',
-            headers: {
-                'Authorization': `Bearer ${accessToken}`
-            }
-        });
-
-        const content = Buffer.from(response.data).toString('utf8');
-        console.log(`[Help Tab] Successfully fetched content (${content.length} bytes)`);
-        return content;
-
-    } catch (error) {
-        console.error('[Help Tab] Failed to fetch from SharePoint/OneDrive:', error.response?.data || error.message);
-        throw error;
-    }
-}
-
 /**
- * Get help tab content with caching
+ * Get help tab content from local file
  */
-async function getHelpTabContent() {
-    const now = Date.now();
-
-    // Check cache
-    if (helpTabCache && (now - helpTabCache.timestamp) < HELP_TAB_CACHE_TTL) {
-        console.log('[Help Tab] Returning cached content');
-        return helpTabCache.content;
-    }
-
-    let content;
-
-    if (HELP_TAB_SOURCE === 'sharepoint' || HELP_TAB_SOURCE === 'onedrive') {
-        if (!HELP_TAB_FILE_URL) {
-            throw new Error('HELP_TAB_FILE_URL is required when HELP_TAB_SOURCE is sharepoint or onedrive');
-        }
-
-        try {
-            content = await fetchHelpTabFromSharePoint(HELP_TAB_FILE_URL);
-        } catch (error) {
-            console.warn('[Help Tab] Failed to fetch from SharePoint/OneDrive, falling back to local file');
-            // Fallback to local file
-            const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
-            content = fs.readFileSync(htmlPath, 'utf8');
-        }
-    } else {
-        // Local file
-        const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
-        content = fs.readFileSync(htmlPath, 'utf8');
-    }
-
-    // Update cache
-    helpTabCache = {
-        content,
-        timestamp: now
-    };
-
-    return content;
+function getHelpTabContent() {
+    const htmlPath = path.join(__dirname, 'public', 'help-tab.html');
+    return fs.readFileSync(htmlPath, 'utf8');
 }
+
 
 /**
  * Teams Tab Configuration endpoint
