@@ -719,6 +719,8 @@ class FreshchatClient {
                 updates.push({ name: 'teams_display_name', value: userProfile.displayName });
             }
 
+            console.log('[Freshchat] Properties to update:', JSON.stringify(updates, null, 2));
+
             // Check if any property has changed
             const existingMap = new Map(existingProperties.map(p => [p.name, p.value]));
             const hasChanges = updates.some(update => {
