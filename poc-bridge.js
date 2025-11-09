@@ -553,16 +553,52 @@ class FreshsalesClient {
                 contact.department = contactData.department;
             }
             
-            // Only add mobile_number if not already set in existing contact
+            // Only add mobile_number if:
+            // 1. This contact doesn't already have one
+            // 2. The phone number isn't used by another contact
             if (contactData.mobile_number && (!existingContact || !existingContact.mobile_number)) {
-                contact.mobile_number = contactData.mobile_number;
+                try {
+                    const phoneCheckResponse = await this.axiosInstance.get('/contacts', {
+                        params: { mobile_number: contactData.mobile_number }
+                    });
+                    if (phoneCheckResponse.data && phoneCheckResponse.data.contacts && phoneCheckResponse.data.contacts.length > 0) {
+                        const otherContact = phoneCheckResponse.data.contacts[0];
+                        if (!existingContact || otherContact.id !== existingContact.id) {
+                            console.log(`[Freshsales] Mobile ${contactData.mobile_number} already used by contact ${otherContact.id}, skipping`);
+                        } else {
+                            contact.mobile_number = contactData.mobile_number;
+                        }
+                    } else {
+                        contact.mobile_number = contactData.mobile_number;
+                    }
+                } catch (phoneCheckError) {
+                    console.warn('[Freshsales] Mobile check failed, skipping:', phoneCheckError.message);
+                }
             } else if (existingContact?.mobile_number) {
                 console.log('[Freshsales] Skipping mobile_number update (already exists)');
             }
             
-            // Only add work_number if not already set in existing contact
+            // Only add work_number if:
+            // 1. This contact doesn't already have one
+            // 2. The phone number isn't used by another contact
             if (contactData.work_number && (!existingContact || !existingContact.work_number)) {
-                contact.work_number = contactData.work_number;
+                try {
+                    const phoneCheckResponse = await this.axiosInstance.get('/contacts', {
+                        params: { work_number: contactData.work_number }
+                    });
+                    if (phoneCheckResponse.data && phoneCheckResponse.data.contacts && phoneCheckResponse.data.contacts.length > 0) {
+                        const otherContact = phoneCheckResponse.data.contacts[0];
+                        if (!existingContact || otherContact.id !== existingContact.id) {
+                            console.log(`[Freshsales] Work number ${contactData.work_number} already used by contact ${otherContact.id}, skipping`);
+                        } else {
+                            contact.work_number = contactData.work_number;
+                        }
+                    } else {
+                        contact.work_number = contactData.work_number;
+                    }
+                } catch (phoneCheckError) {
+                    console.warn('[Freshsales] Work number check failed, skipping:', phoneCheckError.message);
+                }
             } else if (existingContact?.work_number) {
                 console.log('[Freshsales] Skipping work_number update (already exists)');
             }
