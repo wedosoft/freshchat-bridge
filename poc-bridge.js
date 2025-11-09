@@ -1466,7 +1466,9 @@ async function collectTeamsUserProfile(context) {
                 if (member.aadObjectId || activity.from.aadObjectId) {
                     try {
                         const aadId = member.aadObjectId || activity.from.aadObjectId;
-                        const graphProfile = await getGraphUserProfileAppOnly(aadId);
+                        // Extract tenant ID from activity for MultiTenant support
+                        const tenantId = activity.conversation?.tenantId || activity.channelData?.tenant?.id;
+                        const graphProfile = await getGraphUserProfileAppOnly(aadId, tenantId);
 
                         if (graphProfile) {
                             console.log('[Graph] Extended profile retrieved');
@@ -1505,13 +1507,13 @@ async function collectTeamsUserProfile(context) {
 /**
  * Get user profile from Microsoft Graph API using application permissions
  */
-async function getGraphUserProfileAppOnly(aadObjectId) {
+async function getGraphUserProfileAppOnly(aadObjectId, tenantId = null) {
     if (!aadObjectId) {
         return null;
     }
 
     try {
-        const accessToken = await getGraphAccessToken();
+        const accessToken = await getGraphAccessToken(tenantId);
         const selectFields = [
             'displayName',
             'mail',
@@ -1910,9 +1912,11 @@ app.get('/', (req, res) => {
 /**
  * Get access token for Microsoft Graph API
  */
-async function getGraphAccessToken() {
+async function getGraphAccessToken(tenantId = null) {
     try {
-        const tokenEndpoint = `https://login.microsoftonline.com/${BOT_TENANT_ID}/oauth2/v2.0/token`;
+        // Use the provided tenantId, or fall back to BOT_TENANT_ID (but not 'common' for client_credentials)
+        const targetTenant = tenantId || (BOT_TENANT_ID !== 'common' ? BOT_TENANT_ID : 'organizations');
+        const tokenEndpoint = `https://login.microsoftonline.com/${targetTenant}/oauth2/v2.0/token`;
         const response = await axios.post(tokenEndpoint, new URLSearchParams({
             client_id: BOT_APP_ID,
             client_secret: BOT_APP_PASSWORD,

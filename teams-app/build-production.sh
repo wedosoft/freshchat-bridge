@@ -13,17 +13,17 @@ TEMP_DIR="./temp-production"
 rm -rf "$TEMP_DIR"
 mkdir -p "$TEMP_DIR"
 
-# manifest.production.json을 manifest.json으로 복사
-if [ ! -f "manifest.production.json" ]; then
-    echo "❌ Error: manifest.production.json not found"
-    echo "Please create manifest.production.json with production bot credentials"
+# manifest.json을 임시 디렉토리로 복사
+if [ ! -f "manifest.json" ]; then
+    echo "❌ Error: manifest.json not found"
+    echo "Please create manifest.json with production bot credentials"
     exit 1
 fi
 
-cp manifest.production.json "$TEMP_DIR/manifest.json"
+cp manifest.json "$TEMP_DIR/manifest.json"
 
 # manifest에서 버전 추출
-VERSION=$(grep -o '"version": "[^"]*"' manifest.production.json | cut -d'"' -f4)
+VERSION=$(grep -o '"version": "[^"]*"' manifest.json | cut -d'"' -f4)
 echo "📦 Version: $VERSION"
 
 # 아이콘 파일 복사

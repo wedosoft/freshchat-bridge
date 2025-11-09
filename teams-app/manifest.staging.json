@@ -1,7 +1,7 @@
 {
   "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
-  "version": "1.0.7",
+  "version": "1.0.0",
   "id": "ff8e490d-2cf9-424c-a431-84974a803474",
   "packageName": "com.wedosoft.freshchatbridge.staging",
   "developer": {
@@ -22,9 +22,19 @@
     "short": "스테이징 환경 - 테스트 전용",
     "full": "⚠️ 이것은 스테이징/개발 환경입니다. 실제 고객 지원이 아닌 테스트 용도로만 사용하세요."
   },
-  "accentColor": "#FF6B35",
+  "accentColor": "#FFFFFF",
   "showLoadingIndicator": false,
   "isFullScreen": false,
+  "staticTabs": [
+    {
+      "entityId": "helpTab",
+      "name": "도움말",
+      "contentUrl": "https://freshchat-bridge-staging.fly.dev/tab-content",
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
   "configurableTabs": [
     {
       "configurationUrl": "https://freshchat-bridge-staging.fly.dev/tab-config",
@@ -53,7 +63,8 @@
   ],
   "validDomains": [
     "*.freshchat.com",
-    "freshchat-bridge-staging.fly.dev"
+    "freshchat-bridge-staging.fly.dev",
+    "token.botframework.com"
   ],
   "webApplicationInfo": {
     "id": "ff8e490d-2cf9-424c-a431-84974a803474",
