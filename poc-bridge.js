@@ -664,12 +664,12 @@ class FreshchatClient {
     /**
      * Create a new conversation in Freshchat
      */
-    async createConversation(userId, userName, initialMessage, attachments = []) {
+    async createConversation(userId, userName, initialMessage, attachments = [], userProfile = {}) {
         try {
             console.log(`[Freshchat] Creating conversation for user: ${userName}`);
 
-            // Get or create basic Freshchat user (profile managed separately via Freshsales)
-            const user = await this.getOrCreateBasicUser(userId, userName);
+            // Get or create Freshchat user with full profile (email + Teams info)
+            const user = await this.getOrCreateBasicUser(userId, userName, userProfile);
 
             const messageParts = buildFreshchatMessageParts(initialMessage, attachments);
             if (messageParts.length === 0) {
@@ -709,29 +709,67 @@ class FreshchatClient {
     }
 
     /**
-     * Get or create a basic Freshchat user (minimal info, profile managed in Freshsales)
+     * Get or create a Freshchat user with full profile (email + Teams info)
+     * Strategy:
+     * - New user: Create with email + full profile
+     * - Existing user: Find by name → Update with email + profile
      */
-    async getOrCreateBasicUser(externalId, name) {
+    async getOrCreateBasicUser(externalId, name, userProfile = {}) {
+        const userName = name && name.trim() ? name.trim() : 'Teams User';
+        const email = userProfile.email;
+
+        // 🎯 전략: 이메일이 없으면 → 이름을 임시 구분자로 사용
+        if (!email && userName !== 'Teams User') {
+            try {
+                console.log(`[Freshchat] No email, searching by name: ${userName}`);
+
+                // 이름으로 사용자 검색
+                const nameSearchResponse = await this.axiosInstance.get(`/users`, {
+                    params: {
+                        first_name: userName
+                    }
+                });
+
+                if (nameSearchResponse.data?.users && nameSearchResponse.data.users.length > 0) {
+                    const foundUser = nameSearchResponse.data.users[0];
+                    console.log(`[Freshchat] Found user by name: ${foundUser.id} (${userName})`);
+
+                    // reference_id가 없으면 추가
+                    if (!foundUser.reference_id) {
+                        console.log(`[Freshchat] Adding reference_id: ${externalId}`);
+                        await this.updateUserProfile(foundUser.id, userName, null, userProfile, externalId);
+                    }
+
+                    return foundUser;
+                }
+            } catch (error) {
+                console.log(`[Freshchat] Name search failed:`, error.message);
+            }
+        }
+
+        // reference_id로 조회
         try {
-            // Try to get existing user
             const response = await this.axiosInstance.get(`/users/lookup`, {
                 params: { reference_id: externalId }
             });
 
             if (response.data && response.data.id) {
-                console.log(`[Freshchat] Found existing user: ${response.data.id}`);
+                console.log(`[Freshchat] Found existing user by reference_id: ${response.data.id}`);
+
+                // 이메일과 프로필 업데이트
+                if (email) {
+                    console.log(`[Freshchat] Updating user ${response.data.id} with email: ${email}`);
+                    await this.updateUserProfile(response.data.id, userName, email, userProfile);
+                }
+
                 return response.data;
             }
         } catch (error) {
-            // User doesn't exist, create new one
-            console.log(`[Freshchat] Creating new user: ${name || 'Teams User'}`);
+            console.log(`[Freshchat] reference_id lookup failed, will create new user`);
         }
 
-        // Use fallback name if name is empty or undefined
-        const userName = name && name.trim() ? name.trim() : 'Teams User';
-
-        // Create new user with minimal info
-        const createResponse = await this.axiosInstance.post('/users', {
+        // 신규 사용자 생성 - 이메일 + 전체 프로필 포함
+        const createPayload = {
             reference_id: externalId,
             first_name: userName,
             properties: [
@@ -740,10 +778,126 @@ class FreshchatClient {
                     value: 'Microsoft Teams'
                 }
             ]
-        });
+        };
 
-        console.log(`[Freshchat] User created: ${createResponse.data.id}`);
+        // 이메일이 있으면 포함 (Freshchat의 구분자)
+        if (email) {
+            createPayload.email = email;
+            console.log(`[Freshchat] Creating new user with email: ${email}`);
+        } else {
+            console.log(`[Freshchat] Creating new user without email (email will be added later): ${userName}`);
+        }
+
+        // Teams 프로필 정보를 properties에 추가
+        if (userProfile.jobTitle) {
+            createPayload.properties.push({
+                name: 'teams_job_title',
+                value: userProfile.jobTitle
+            });
+        }
+        if (userProfile.department) {
+            createPayload.properties.push({
+                name: 'teams_department',
+                value: userProfile.department
+            });
+        }
+        if (userProfile.mobilePhone) {
+            createPayload.properties.push({
+                name: 'teams_mobile_phone',
+                value: userProfile.mobilePhone
+            });
+        }
+        if (userProfile.officePhone) {
+            createPayload.properties.push({
+                name: 'teams_office_phone',
+                value: userProfile.officePhone
+            });
+        }
+        if (userProfile.officeLocation) {
+            createPayload.properties.push({
+                name: 'teams_office_location',
+                value: userProfile.officeLocation
+            });
+        }
+
+        const createResponse = await this.axiosInstance.post('/users', createPayload);
+
+        console.log(`[Freshchat] User created: ${createResponse.data.id} ${email ? `with email: ${email}` : '(no email)'}`);
         return createResponse.data;
+    }
+
+    /**
+     * Update Freshchat user profile with email and Teams info
+     */
+    async updateUserProfile(userId, name, email, userProfile = {}, referenceId = null) {
+        try {
+            const updatePayload = {
+                first_name: name
+            };
+
+            // reference_id 추가 (없었던 경우)
+            if (referenceId) {
+                updatePayload.reference_id = referenceId;
+            }
+
+            // 이메일 추가 (Freshchat 구분자)
+            if (email) {
+                updatePayload.email = email;
+            }
+
+            // Teams 프로필 정보를 properties에 추가
+            const properties = [
+                {
+                    name: 'source',
+                    value: 'Microsoft Teams'
+                }
+            ];
+
+            if (userProfile.jobTitle) {
+                properties.push({
+                    name: 'teams_job_title',
+                    value: userProfile.jobTitle
+                });
+            }
+            if (userProfile.department) {
+                properties.push({
+                    name: 'teams_department',
+                    value: userProfile.department
+                });
+            }
+            if (userProfile.mobilePhone) {
+                properties.push({
+                    name: 'teams_mobile_phone',
+                    value: userProfile.mobilePhone
+                });
+            }
+            if (userProfile.officePhone) {
+                properties.push({
+                    name: 'teams_office_phone',
+                    value: userProfile.officePhone
+                });
+            }
+            if (userProfile.officeLocation) {
+                properties.push({
+                    name: 'teams_office_location',
+                    value: userProfile.officeLocation
+                });
+            }
+            if (userProfile.displayName) {
+                properties.push({
+                    name: 'teams_display_name',
+                    value: userProfile.displayName
+                });
+            }
+
+            updatePayload.properties = properties;
+
+            await this.axiosInstance.put(`/users/${userId}`, updatePayload);
+            console.log(`[Freshchat] User profile updated successfully: ${userId}`);
+        } catch (error) {
+            console.error(`[Freshchat] Failed to update user profile ${userId}:`, error.response?.data || error.message);
+            throw error;
+        }
     }
 
     /**
@@ -1779,7 +1933,7 @@ async function handleTeamsMessage(context) {
                 activity.from.name,
                 initialMessage,
                 freshchatAttachments,
-                {}  // No longer passing userProfile to createConversation
+                userProfile  // 🎯 Pass full user profile (including email)
             );
 
             const freshchatConversationGuid = freshchatConv?.conversation_id
