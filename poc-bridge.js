@@ -1943,11 +1943,15 @@ async function fetchHelpTabFromSharePoint(fileUrl) {
         console.log(`[Help Tab] Fetching from SharePoint/OneDrive: ${fileUrl}`);
 
         // Check if this is a public share link (OneDrive or SharePoint)
+        // Disabled: Always use Graph API for security
+        const isPublicShareLink = false;
+        /*
         const isPublicShareLink = fileUrl.includes('1drv.ms') ||
                                   fileUrl.includes('onedrive.live.com') ||
                                   fileUrl.includes('sharepoint.com/:') ||
                                   fileUrl.includes('sharepoint.com/_layouts/') ||
                                   fileUrl.match(/\?sharingv2/i);
+        */
 
         if (isPublicShareLink) {
             console.log('[Help Tab] Detected public share link, fetching directly without authentication');
