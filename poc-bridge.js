@@ -17,6 +17,11 @@ const fs = require('fs');
 const path = require('path');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
 
+// Fix for Azure SDK crypto issue in Node.js 18+
+if (!global.crypto) {
+    global.crypto = crypto.webcrypto;
+}
+
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ============================================================================
