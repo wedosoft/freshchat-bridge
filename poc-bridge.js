@@ -1479,6 +1479,15 @@ async function collectTeamsUserProfile(context) {
 
                         if (graphProfile) {
                             console.log('[Graph] Extended profile retrieved');
+                            console.log('[Graph] Raw Graph API data:', JSON.stringify({
+                                jobTitle: graphProfile.jobTitle,
+                                department: graphProfile.department,
+                                mobilePhone: graphProfile.mobilePhone,
+                                officeLocation: graphProfile.officeLocation,
+                                businessPhones: graphProfile.businessPhones,
+                                mail: graphProfile.mail
+                            }, null, 2));
+                            
                             if (graphProfile.jobTitle) userProfile.jobTitle = graphProfile.jobTitle;
                             if (graphProfile.department) userProfile.department = graphProfile.department;
                             if (graphProfile.mobilePhone) userProfile.mobilePhone = graphProfile.mobilePhone;

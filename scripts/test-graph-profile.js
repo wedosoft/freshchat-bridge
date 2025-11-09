@@ -11,11 +11,13 @@
 require('dotenv').config();
 const axios = require('axios');
 
-async function getGraphAccessToken() {
-    const tenantId = process.env.MICROSOFT_TENANT_ID;
-    const clientId = process.env.MICROSOFT_APP_ID;
-    const clientSecret = process.env.MICROSOFT_APP_PASSWORD;
+async function getGraphAccessToken(targetTenantId = null) {
+    // Use customer tenant ID for testing (can be overridden with --tenant parameter)
+    const tenantId = targetTenantId || 'b9501eff-d05e-4bf1-8a87-898d83f46ceb';
+    const clientId = process.env.BOT_APP_ID;
+    const clientSecret = process.env.BOT_APP_PASSWORD;
 
+    console.log(`🔐 Using tenant: ${tenantId}\n`);
     const tokenEndpoint = `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`;
 
     try {
