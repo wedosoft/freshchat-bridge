@@ -788,6 +788,11 @@ class FreshchatClient {
             console.log(`[Freshchat] Creating new user without email (email will be added later): ${userName}`);
         }
 
+        // 부서 추가 (Freshchat 커스텀 필드)
+        if (userProfile.department) {
+            createPayload.cf_field2556 = userProfile.department;
+        }
+
         // Teams 프로필 정보를 properties에 추가
         if (userProfile.jobTitle) {
             createPayload.properties.push({
@@ -843,6 +848,11 @@ class FreshchatClient {
             // 이메일 추가 (Freshchat 구분자)
             if (email) {
                 updatePayload.email = email;
+            }
+
+            // 부서 추가 (Freshchat 커스텀 필드)
+            if (userProfile.department) {
+                updatePayload.cf_field2556 = userProfile.department;
             }
 
             // Teams 프로필 정보를 properties에 추가
