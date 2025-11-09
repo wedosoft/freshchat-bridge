@@ -1,0 +1,69 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "ff8e490d-2cf9-424c-a431-84974a803474",
+  "packageName": "com.wedosoft.freshchatbridge.staging",
+  "developer": {
+    "name": "We Do Soft Inc.",
+    "websiteUrl": "https://wedosoft.net",
+    "privacyUrl": "https://www.wedosoft.net/privacy-policy",
+    "termsOfUseUrl": "https://www.wedosoft.net/privacy-policy"
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "name": {
+    "short": "EXO헬프 (Staging)",
+    "full": "EXO헬프 고객지원 (개발/테스트)"
+  },
+  "description": {
+    "short": "스테이징 환경 - 테스트 전용",
+    "full": "⚠️ 이것은 스테이징/개발 환경입니다. 실제 고객 지원이 아닌 테스트 용도로만 사용하세요."
+  },
+  "accentColor": "#FF6B35",
+  "showLoadingIndicator": false,
+  "isFullScreen": false,
+  "staticTabs": [
+    {
+      "entityId": "helpTab",
+      "name": "도움말",
+      "contentUrl": "https://freshchat-bridge-staging.fly.dev/tab-content",
+      "websiteUrl": "https://freshchat-bridge-staging.fly.dev/tab-content",
+      "scopes": [
+        "personal"
+      ]
+    }
+  ],
+  "configurableTabs": [
+    {
+      "configurationUrl": "https://freshchat-bridge-staging.fly.dev/tab-config",
+      "canUpdateConfiguration": false,
+      "scopes": [
+        "team",
+        "groupchat"
+      ]
+    }
+  ],
+  "bots": [
+    {
+      "botId": "ff8e490d-2cf9-424c-a431-84974a803474",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": true,
+      "isNotificationOnly": false
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": [
+    "*.freshchat.com",
+    "freshchat-bridge-staging.fly.dev"
+  ]
+}
