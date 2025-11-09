@@ -511,8 +511,8 @@ class FreshsalesClient {
      * Maps Teams profile to Freshsales standard fields:
      * - job_title: jobTitle
      * - department: department
-     * - mobile_number: mobilePhone
-     * - work_number: officePhone
+     * - mobile_number: mobilePhone (only if not already set)
+     * - work_number: officePhone (only if not already set)
      * - address: officeLocation
      * @param {string} email - User email (unique identifier)
      * @param {Object} contactData - Contact data to upsert
@@ -522,6 +522,25 @@ class FreshsalesClient {
         try {
             console.log(`[Freshsales] Upserting contact for email: ${email}`);
             console.log('[Freshsales] Contact data:', JSON.stringify(contactData, null, 2));
+
+            // First, try to get existing contact to check phone numbers
+            let existingContact = null;
+            try {
+                const lookupResponse = await this.axiosInstance.post('/lookup', {
+                    q: email,
+                    f: 'email',
+                    entities: 'contact'
+                });
+                if (lookupResponse.data && lookupResponse.data.contacts && lookupResponse.data.contacts.contacts) {
+                    const contacts = lookupResponse.data.contacts.contacts;
+                    if (contacts.length > 0) {
+                        existingContact = contacts[0];
+                        console.log('[Freshsales] Found existing contact:', existingContact.id);
+                    }
+                }
+            } catch (lookupError) {
+                console.log('[Freshsales] Lookup failed (contact may not exist):', lookupError.message);
+            }
 
             // Build contact payload with standard fields only
             const contact = {
@@ -536,12 +555,21 @@ class FreshsalesClient {
             if (contactData.department) {
                 contact.department = contactData.department;
             }
-            if (contactData.mobile_number) {
+            
+            // Only add mobile_number if not already set in existing contact
+            if (contactData.mobile_number && (!existingContact || !existingContact.mobile_number)) {
                 contact.mobile_number = contactData.mobile_number;
+            } else if (existingContact?.mobile_number) {
+                console.log('[Freshsales] Skipping mobile_number update (already exists)');
             }
-            if (contactData.work_number) {
+            
+            // Only add work_number if not already set in existing contact
+            if (contactData.work_number && (!existingContact || !existingContact.work_number)) {
                 contact.work_number = contactData.work_number;
+            } else if (existingContact?.work_number) {
+                console.log('[Freshsales] Skipping work_number update (already exists)');
             }
+            
             if (contactData.address) {
                 contact.address = contactData.address;
             }
@@ -562,6 +590,7 @@ class FreshsalesClient {
                 status: error.response?.status,
                 statusText: error.response?.statusText,
                 data: error.response?.data,
+                errorDetails: JSON.stringify(error.response?.data, null, 2),
                 message: error.message
             });
             throw error;
