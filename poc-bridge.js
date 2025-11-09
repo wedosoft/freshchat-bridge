@@ -523,22 +523,6 @@ class FreshsalesClient {
             console.log(`[Freshsales] Upserting contact for email: ${email}`);
             console.log('[Freshsales] Contact data:', JSON.stringify(contactData, null, 2));
 
-            // First, try to get existing contact to check phone numbers
-            let existingContact = null;
-            try {
-                const searchResponse = await this.axiosInstance.get('/contacts', {
-                    params: {
-                        email: email
-                    }
-                });
-                if (searchResponse.data && searchResponse.data.contacts && searchResponse.data.contacts.length > 0) {
-                    existingContact = searchResponse.data.contacts[0];
-                    console.log('[Freshsales] Found existing contact:', existingContact.id);
-                }
-            } catch (searchError) {
-                console.log('[Freshsales] Contact search failed (may not exist):', searchError.message);
-            }
-
             // Build contact payload with standard fields only
             const contact = {
                 email: contactData.email,
@@ -552,59 +536,16 @@ class FreshsalesClient {
             if (contactData.department) {
                 contact.department = contactData.department;
             }
-            
-            // Only add mobile_number if:
-            // 1. This contact doesn't already have one
-            // 2. The phone number isn't used by another contact
-            if (contactData.mobile_number && (!existingContact || !existingContact.mobile_number)) {
-                try {
-                    const phoneCheckResponse = await this.axiosInstance.get('/contacts', {
-                        params: { mobile_number: contactData.mobile_number }
-                    });
-                    if (phoneCheckResponse.data && phoneCheckResponse.data.contacts && phoneCheckResponse.data.contacts.length > 0) {
-                        const otherContact = phoneCheckResponse.data.contacts[0];
-                        if (!existingContact || otherContact.id !== existingContact.id) {
-                            console.log(`[Freshsales] Mobile ${contactData.mobile_number} already used by contact ${otherContact.id}, skipping`);
-                        } else {
-                            contact.mobile_number = contactData.mobile_number;
-                        }
-                    } else {
-                        contact.mobile_number = contactData.mobile_number;
-                    }
-                } catch (phoneCheckError) {
-                    console.warn('[Freshsales] Mobile check failed, skipping:', phoneCheckError.message);
-                }
-            } else if (existingContact?.mobile_number) {
-                console.log('[Freshsales] Skipping mobile_number update (already exists)');
-            }
-            
-            // Only add work_number if:
-            // 1. This contact doesn't already have one
-            // 2. The phone number isn't used by another contact
-            if (contactData.work_number && (!existingContact || !existingContact.work_number)) {
-                try {
-                    const phoneCheckResponse = await this.axiosInstance.get('/contacts', {
-                        params: { work_number: contactData.work_number }
-                    });
-                    if (phoneCheckResponse.data && phoneCheckResponse.data.contacts && phoneCheckResponse.data.contacts.length > 0) {
-                        const otherContact = phoneCheckResponse.data.contacts[0];
-                        if (!existingContact || otherContact.id !== existingContact.id) {
-                            console.log(`[Freshsales] Work number ${contactData.work_number} already used by contact ${otherContact.id}, skipping`);
-                        } else {
-                            contact.work_number = contactData.work_number;
-                        }
-                    } else {
-                        contact.work_number = contactData.work_number;
-                    }
-                } catch (phoneCheckError) {
-                    console.warn('[Freshsales] Work number check failed, skipping:', phoneCheckError.message);
-                }
-            } else if (existingContact?.work_number) {
-                console.log('[Freshsales] Skipping work_number update (already exists)');
-            }
-            
             if (contactData.address) {
                 contact.address = contactData.address;
+            }
+
+            // Strategy 1: Try with phone numbers
+            if (contactData.mobile_number) {
+                contact.mobile_number = contactData.mobile_number;
+            }
+            if (contactData.work_number) {
+                contact.work_number = contactData.work_number;
             }
 
             const payload = {
@@ -614,9 +555,34 @@ class FreshsalesClient {
                 contact: contact
             };
 
-            const response = await this.axiosInstance.post('/contacts/upsert', payload);
-            console.log('[Freshsales] Upsert successful:', JSON.stringify(response.data, null, 2));
-            return response.data;
+            try {
+                const response = await this.axiosInstance.post('/contacts/upsert', payload);
+                console.log('[Freshsales] Upsert successful:', JSON.stringify(response.data, null, 2));
+                return response.data;
+            } catch (firstError) {
+                // If phone number duplication error, retry without phone numbers
+                if (firstError.response?.status === 400 && 
+                    firstError.response?.data?.errors?.message?.includes('이미 존재합니다')) {
+                    console.log('[Freshsales] Phone number conflict detected, retrying without phone numbers');
+                    
+                    // Remove phone numbers and retry
+                    delete contact.mobile_number;
+                    delete contact.work_number;
+                    
+                    const retryPayload = {
+                        unique_identifier: {
+                            emails: email
+                        },
+                        contact: contact
+                    };
+                    
+                    const retryResponse = await this.axiosInstance.post('/contacts/upsert', retryPayload);
+                    console.log('[Freshsales] Upsert successful (without phone):', JSON.stringify(retryResponse.data, null, 2));
+                    return retryResponse.data;
+                } else {
+                    throw firstError;
+                }
+            }
         } catch (error) {
             console.error('[Freshsales] Upsert failed:', {
                 email,
