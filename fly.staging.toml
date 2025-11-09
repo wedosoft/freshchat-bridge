@@ -1,0 +1,37 @@
+# fly.toml app configuration file for STAGING environment
+
+app = "freshchat-bridge-staging"
+primary_region = "nrt"
+
+[build]
+
+[http_service]
+  internal_port = 3978
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  # Health check
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "10s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/"
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 25
+    hard_limit = 50
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 1024
+
+# Auto-scaling limits (스테이징은 운영보다 작게)
+[autoscale]
+  min_count = 1
+  max_count = 3

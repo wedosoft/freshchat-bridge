@@ -481,12 +481,60 @@ For issues or questions:
 
 ---
 
+## 🌍 Environment Management
+
+This project supports **staging** and **production** environments with automated deployments.
+
+### Quick Links
+- 📖 **[Quick Start Guide](docs/QUICKSTART_STAGING.md)** - 15분 설정 가이드
+- 📚 **[Full Setup Guide](docs/STAGING_PRODUCTION_SETUP.md)** - 상세 환경 구성 가이드
+- 🏢 **[Multi-Tenant Guide](docs/MULTI_TENANT_GUIDE.md)** - 멀티 테넌트 설정
+
+### Environment Overview
+
+| Environment | Branch | Fly.io App | URL |
+|-------------|--------|------------|-----|
+| **Production** | `main` | `freshchat-bridge` | https://freshchat-bridge.fly.dev |
+| **Staging** | `staging` | `freshchat-bridge-staging` | https://freshchat-bridge-staging.fly.dev |
+| **Development** | `develop` | N/A | Local only |
+
+### Check Your Setup
+
+```bash
+# 환경 상태 확인
+./scripts/check-environment.sh
+
+# 스테이징 로그 확인
+flyctl logs --app freshchat-bridge-staging
+
+# 운영 로그 확인
+flyctl logs --app freshchat-bridge
+```
+
+### Development Workflow
+
+```bash
+# 1. 개발
+git checkout develop
+# ... 코드 작성 ...
+
+# 2. 스테이징 배포
+git checkout staging
+git merge develop
+git push origin staging  # 자동 배포
+
+# 3. 운영 배포
+# GitHub에서 staging -> main PR 생성 및 머지
+```
+
+---
+
 ## License
 
 This is a proof-of-concept implementation for evaluation purposes.
 
 ---
 
-**Last Updated:** 2024-01-15
+**Last Updated:** 2025-01-09
 **Version:** 0.1.0
-**Status:** PoC - Not for production use
+**Status:** Production-ready with staging environment

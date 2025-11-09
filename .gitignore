@@ -26,6 +26,12 @@ Thumbs.db
 *.temp
 uploads/
 teams-app/*.zip
+teams-app/temp-*/
+
+# Environment-specific manifests (if they contain sensitive IDs)
+# Uncomment if you want to keep these in private config
+# teams-app/manifest.staging.json
+# teams-app/manifest.production.json
 
 # Claude Flow generated files
 .claude/settings.local.json
