@@ -825,6 +825,7 @@ class FreshchatClient {
             });
         }
 
+        console.log(`[Freshchat] Create payload:`, JSON.stringify(createPayload, null, 2));
         const createResponse = await this.axiosInstance.post('/users', createPayload);
 
         console.log(`[Freshchat] User created: ${createResponse.data.id} ${email ? `with email: ${email}` : '(no email)'}`);
@@ -902,6 +903,7 @@ class FreshchatClient {
 
             updatePayload.properties = properties;
 
+            console.log(`[Freshchat] Update payload:`, JSON.stringify(updatePayload, null, 2));
             await this.axiosInstance.put(`/users/${userId}`, updatePayload);
             console.log(`[Freshchat] User profile updated successfully: ${userId}`);
         } catch (error) {
