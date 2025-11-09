@@ -526,20 +526,17 @@ class FreshsalesClient {
             // First, try to get existing contact to check phone numbers
             let existingContact = null;
             try {
-                const lookupResponse = await this.axiosInstance.post('/lookup', {
-                    q: email,
-                    f: 'email',
-                    entities: 'contact'
-                });
-                if (lookupResponse.data && lookupResponse.data.contacts && lookupResponse.data.contacts.contacts) {
-                    const contacts = lookupResponse.data.contacts.contacts;
-                    if (contacts.length > 0) {
-                        existingContact = contacts[0];
-                        console.log('[Freshsales] Found existing contact:', existingContact.id);
+                const searchResponse = await this.axiosInstance.get('/contacts', {
+                    params: {
+                        email: email
                     }
+                });
+                if (searchResponse.data && searchResponse.data.contacts && searchResponse.data.contacts.length > 0) {
+                    existingContact = searchResponse.data.contacts[0];
+                    console.log('[Freshsales] Found existing contact:', existingContact.id);
                 }
-            } catch (lookupError) {
-                console.log('[Freshsales] Lookup failed (contact may not exist):', lookupError.message);
+            } catch (searchError) {
+                console.log('[Freshsales] Contact search failed (may not exist):', searchError.message);
             }
 
             // Build contact payload with standard fields only
