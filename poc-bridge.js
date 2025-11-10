@@ -1977,7 +1977,14 @@ async function handleTeamsMessage(context) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
             }
         } else {
-            // Existing conversation - Update Freshchat user profile with latest Teams info
+            // Existing conversation - Update conversationReference to track latest active thread
+            const latestConversationReference = TurnContext.getConversationReference(activity);
+            mapping = updateConversationMapping(teamsConvId, {
+                conversationReference: latestConversationReference
+            });
+            console.log(`[Mapping] Updated conversationReference to latest thread: ${teamsConvId}`);
+
+            // Update Freshchat user profile with latest Teams info
             if (mapping.freshchatUserId && userProfile.email) {
                 try {
                     console.log(`[Freshchat] Updating existing user profile: ${mapping.freshchatUserId}`);
@@ -3039,6 +3046,38 @@ app.post('/freshchat/webhook', async (req, res) => {
         res.sendStatus(200);
     } catch (error) {
         console.error('[Webhook Error]', error);
+
+        // Notify agent in Freshchat about Teams delivery failure
+        try {
+            const { data } = req.body;
+            const message = data?.message;
+            const freshchatConversationId = message?.freshchat_conversation_id
+                ? String(message.freshchat_conversation_id)
+                : data?.freshchat_conversation_id
+                    ? String(data.freshchat_conversation_id)
+                    : null;
+
+            if (freshchatConversationId) {
+                const errorMessage = error.message || 'Unknown error';
+                const errorStatus = error.response?.status || 'N/A';
+
+                console.log(`[Freshchat] Sending delivery failure notification to conversation: ${freshchatConversationId}`);
+
+                await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                    message_parts: [{
+                        text: {
+                            content: `⚠️ **Teams 메시지 전송 실패**\n\n사용자에게 메시지를 전달하지 못했습니다.\n\n**오류**: ${errorMessage}\n**상태 코드**: ${errorStatus}\n\n사용자가 Teams에서 새로운 메시지를 보내면 다시 시도됩니다.`
+                        }
+                    }],
+                    actor_type: 'system'
+                }).catch(notifyError => {
+                    console.error('[Freshchat] Failed to send error notification:', notifyError.message);
+                });
+            }
+        } catch (notificationError) {
+            console.error('[Freshchat] Error while sending failure notification:', notificationError.message);
+        }
+
         res.sendStatus(500);
     }
 });
