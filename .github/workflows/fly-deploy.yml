@@ -1,37 +1,18 @@
-name: Deploy to Production (Fly.io)
+name: Deploy to Fly.io
 
 on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'teams-app/**'
-      - 'docs/**'
-      - '**.md'
-      - '.github/**'
 
 jobs:
   deploy:
-    name: Deploy to Production
+    name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://freshchat-bridge.fly.dev
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Flyctl
-        uses: superfly/flyctl-actions/setup-flyctl@master
-
-      - name: Deploy to Fly.io (Production)
-        run: flyctl deploy --remote-only --config fly.toml
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only --app freshchat-bridge
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
-      - name: Deployment Summary
-        run: |
-          echo "✅ Production deployment completed"
-          echo "🔗 URL: https://freshchat-bridge.fly.dev"
-          echo "📊 Check status: flyctl status --app freshchat-bridge"
