@@ -3,6 +3,7 @@
  *
  * This is a proof-of-concept implementation demonstrating real-time
  * message transfer between Microsoft Teams and Freshchat.
+ * Updated: 2025-11-10
  */
 
 require('dotenv').config();
@@ -1441,7 +1442,7 @@ class FreshchatClient {
 
         if (lastError) {
             console.error(
-                [Freshchat] Failed to hydrate message ${messageId} using identifiers [${identifiers.join(', ')}]:`,
+                `[Freshchat] Failed to hydrate message ${messageId} using identifiers [${identifiers.join(', ')}]:`,
                 lastError.response?.data || lastError.message
             );
         } else if (!fallbackMessage) {
@@ -1952,7 +1953,7 @@ async function collectTeamsUserProfile(context) {
             const member = await TeamsInfo.getMember(context, activity.from.id);
 
             if (member) {
-                console.log(`[Teams] Member info retrieved');
+                console.log(`[Teams] Member info retrieved`);
 
                 if (member.name) userProfile.displayName = member.name;
                 if (member.email) userProfile.email = member.email;
@@ -2636,7 +2637,7 @@ app.get('/tab-content', async (req, res) => {
  */
 app.post('/tab-content/refresh', async (req, res) => {
     try {
-        console.log(`[Help Tab] Manual cache refresh requested');
+        console.log(`[Help Tab] Manual cache refresh requested`);
         helpTabCache = null; // Clear cache
         const content = await getHelpTabContent();
         res.json({
@@ -3290,7 +3291,7 @@ app.post('/freshchat/webhook', async (req, res) => {
 
             if (attachmentParts.length > 0) {
                 if (!PUBLIC_URL) {
-                    console.error(`[Teams] PUBLIC_URL is not set. Cannot process attachments from Freshchat.');
+                    console.error(`[Teams] PUBLIC_URL is not set. Cannot process attachments from Freshchat.`);
                     messageText += `\n\n⚠️ 첨부파일을 처리할 수 없습니다: 서버 구성 오류.`;
                 } else {
                     for (const attachment of attachmentParts) {
