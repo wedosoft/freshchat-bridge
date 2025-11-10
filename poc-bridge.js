@@ -1245,12 +1245,19 @@ class FreshchatClient {
 
     /**
      * Store Teams conversation data in Freshchat conversation properties
+     * NOTE: Freshchat API does not support updating conversation properties via PUT
+     * This function is disabled to avoid 400 errors
      */
     async updateConversationTeamsData(conversationId, teamsConvId, conversationReference) {
+        // DISABLED: Freshchat API returns 400 "Conversation payload not valid"
+        // Main mapping is preserved in Redis and user properties, so this is not needed
+        console.log(`[Freshchat] Skipping conversation property storage (not supported by API) - using Redis and user properties instead`);
+        return;
+        
+        /* Original code - kept for reference
         try {
             console.log(`[Freshchat] Storing Teams data in conversation: ${conversationId}`);
 
-            // Store as conversation properties
             const properties = [
                 {
                     name: 'teams_conversation_id',
@@ -1268,8 +1275,10 @@ class FreshchatClient {
 
             console.log(`[Freshchat] ✅ Teams data stored in conversation ${conversationId}`);
         } catch (error) {
-            console.error(`[Freshchat] Failed to store Teams data in conversation:`, error.response?.data || error.message);
+            console.warn(`[Freshchat] ⚠️  Could not store Teams data in conversation properties (non-critical):`, error.response?.data || error.message);
+            console.warn(`[Freshchat] ⚠️  This is a backup storage - main mapping is still preserved in Redis and user properties`);
         }
+        */
     }
 
     /**
