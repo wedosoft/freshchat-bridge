@@ -991,6 +991,64 @@ class FreshchatClient {
     }
 
     /**
+     * Store Teams conversation data in Freshchat conversation properties
+     */
+    async updateConversationTeamsData(conversationId, teamsConvId, conversationReference) {
+        try {
+            console.log(`[Freshchat] Storing Teams data in conversation: ${conversationId}`);
+
+            // Store as conversation properties
+            const properties = [
+                {
+                    name: 'teams_conversation_id',
+                    value: teamsConvId
+                },
+                {
+                    name: 'teams_conversation_reference',
+                    value: JSON.stringify(conversationReference)
+                }
+            ];
+
+            await this.axiosInstance.put(`/conversations/${conversationId}`, {
+                properties
+            });
+
+            console.log(`[Freshchat] ✅ Teams data stored in conversation ${conversationId}`);
+        } catch (error) {
+            console.error(`[Freshchat] Failed to store Teams data in conversation:`, error.response?.data || error.message);
+        }
+    }
+
+    /**
+     * Get Teams conversation data from Freshchat conversation properties
+     */
+    async getConversationTeamsData(conversationId) {
+        try {
+            const response = await this.axiosInstance.get(`/conversations/${conversationId}`);
+            const conversation = response.data;
+
+            if (conversation.properties) {
+                const teamsConvIdProp = conversation.properties.find(p => p.name === 'teams_conversation_id');
+                const teamsRefProp = conversation.properties.find(p => p.name === 'teams_conversation_reference');
+
+                if (teamsConvIdProp && teamsRefProp) {
+                    console.log(`[Freshchat] ✅ Found Teams data in conversation ${conversationId}`);
+                    return {
+                        teamsConvId: teamsConvIdProp.value,
+                        conversationReference: JSON.parse(teamsRefProp.value)
+                    };
+                }
+            }
+
+            console.log(`[Freshchat] No Teams data found in conversation ${conversationId}`);
+            return null;
+        } catch (error) {
+            console.error(`[Freshchat] Failed to get Teams data from conversation:`, error.response?.data || error.message);
+            return null;
+        }
+    }
+
+    /**
      * Upload a file to Freshchat
      */
     async uploadFile(fileBuffer, filename, contentType) {
@@ -1969,7 +2027,17 @@ async function handleTeamsMessage(context) {
 
             console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${resolveFreshchatConversationId(mapping)})`);
 
-            // Store Teams conversation ID in Freshchat user properties (async, non-blocking)
+            // Store Teams data in Freshchat conversation properties (async, non-blocking)
+            const conversationIdToUpdate = freshchatConversationGuid || freshchatConversationNumericId;
+            if (conversationIdToUpdate) {
+                freshchatClient.updateConversationTeamsData(
+                    conversationIdToUpdate,
+                    teamsConvId,
+                    mapping.conversationReference
+                ).catch(err => console.warn('[Freshchat] Background conversation update failed:', err.message));
+            }
+
+            // Also store Teams conversation ID in Freshchat user properties (async, non-blocking)
             freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId)
                 .catch(err => console.warn('[Freshchat] Background profile update failed:', err.message));
 
@@ -1983,6 +2051,16 @@ async function handleTeamsMessage(context) {
                 conversationReference: latestConversationReference
             });
             console.log(`[Mapping] Updated conversationReference to latest thread: ${teamsConvId}`);
+
+            // Update Teams data in Freshchat conversation properties (async, non-blocking)
+            const conversationIdToUpdate = mapping.freshchatConversationGuid || mapping.freshchatConversationNumericId;
+            if (conversationIdToUpdate) {
+                freshchatClient.updateConversationTeamsData(
+                    conversationIdToUpdate,
+                    teamsConvId,
+                    latestConversationReference
+                ).catch(err => console.warn('[Freshchat] Background conversation update failed:', err.message));
+            }
 
             // Update Freshchat user profile with latest Teams info
             if (mapping.freshchatUserId && userProfile.email) {
@@ -2582,22 +2660,42 @@ app.post('/freshchat/webhook', async (req, res) => {
                 teamsConvId = reverseMap.get(conversationGuid);
             }
 
-            // If no mapping found in memory, try to get from Freshchat user properties
+            // If no mapping found in memory, try to restore from Freshchat conversation properties
             if (!teamsConvId) {
                 console.log(`[Freshchat] No Teams mapping found in memory for conversation: ${freshchatConversationId}`);
-                
-                // Get user ID from message
-                const freshchatUserId = message.user_id || data.user_id;
-                if (freshchatUserId) {
-                    console.log(`[Freshchat] Attempting to retrieve Teams conversation ID from user properties (user: ${freshchatUserId})`);
-                    teamsConvId = await freshchatClient.getUserTeamsConversation(freshchatUserId);
-                    
-                    if (teamsConvId) {
-                        console.log(`[Freshchat] ✅ Found Teams conversation ID from user properties: ${teamsConvId}`);
-                        // Restore mapping to memory for future use
-                        reverseMap.set(freshchatConversationId, teamsConvId);
-                        if (conversationGuid) {
-                            reverseMap.set(conversationGuid, teamsConvId);
+                console.log(`[Freshchat] Attempting to restore Teams data from conversation properties...`);
+
+                // Try to get Teams data from conversation properties (most reliable)
+                const conversationIdToQuery = conversationGuid || freshchatConversationId;
+                const teamsData = await freshchatClient.getConversationTeamsData(conversationIdToQuery);
+
+                if (teamsData) {
+                    teamsConvId = teamsData.teamsConvId;
+                    console.log(`[Freshchat] ✅ Restored Teams conversation ID from conversation properties: ${teamsConvId}`);
+
+                    // Restore full mapping to memory
+                    updateConversationMapping(teamsConvId, {
+                        freshchatConversationGuid: conversationGuid || null,
+                        freshchatConversationNumericId: freshchatConversationId,
+                        conversationReference: teamsData.conversationReference
+                    });
+
+                    console.log(`[Mapping] Restored from Freshchat: Teams(${teamsConvId}) ↔ Freshchat(${freshchatConversationId})`);
+                } else {
+                    // Fallback: try user properties (legacy method)
+                    const freshchatUserId = message.user_id || data.user_id;
+                    if (freshchatUserId) {
+                        console.log(`[Freshchat] Attempting to retrieve Teams conversation ID from user properties (user: ${freshchatUserId})`);
+                        teamsConvId = await freshchatClient.getUserTeamsConversation(freshchatUserId);
+
+                        if (teamsConvId) {
+                            console.log(`[Freshchat] ⚠️ Found Teams conversation ID from user properties: ${teamsConvId}`);
+                            console.log(`[Freshchat] ⚠️ Missing conversation reference - user needs to send a message to restore full mapping`);
+                            // Restore mapping to memory for future use
+                            reverseMap.set(freshchatConversationId, teamsConvId);
+                            if (conversationGuid) {
+                                reverseMap.set(conversationGuid, teamsConvId);
+                            }
                         }
                     }
                 }
@@ -2607,6 +2705,26 @@ app.post('/freshchat/webhook', async (req, res) => {
                 console.log(`[Freshchat] ℹ️  No Teams mapping found for conversation: ${freshchatConversationId}`);
                 console.log(`[Freshchat] ℹ️  This conversation was likely started from a different channel (not Teams)`);
                 console.log(`[Freshchat] ℹ️  Actor type: ${actorType} - Skipping message forwarding to Teams`);
+
+                // Notify agent about delivery failure (only for agent messages)
+                if (actorType === 'agent') {
+                    try {
+                        console.log(`[Freshchat] Sending delivery failure notification to conversation: ${freshchatConversationId}`);
+                        await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                            message_parts: [{
+                                text: {
+                                    content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 매핑 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
+                                }
+                            }],
+                            actor_type: 'system'
+                        }).catch(notifyError => {
+                            console.error('[Freshchat] Failed to send error notification:', notifyError.message);
+                        });
+                    } catch (notificationError) {
+                        console.error('[Freshchat] Error while sending failure notification:', notificationError.message);
+                    }
+                }
+
                 return res.sendStatus(200);
             }
 
@@ -2614,11 +2732,31 @@ app.post('/freshchat/webhook', async (req, res) => {
             if (!mapping) {
                 console.log(`[Freshchat] ⚠️  Mapping data missing for Teams conversation: ${teamsConvId}`);
                 console.log(`[Freshchat] ⚠️  Attempting to restore conversation reference...`);
-                
+
                 // We have teamsConvId but no full mapping - need to get conversation reference
                 // This can happen after server restart
                 // For now, we'll skip this message and wait for user to send a new message from Teams
                 console.log(`[Freshchat] ⚠️  Cannot send message without conversation reference. User needs to send a message from Teams first.`);
+
+                // Notify agent about missing conversation reference (only for agent messages)
+                if (actorType === 'agent') {
+                    try {
+                        console.log(`[Freshchat] Sending missing reference notification to conversation: ${freshchatConversationId}`);
+                        await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                            message_parts: [{
+                                text: {
+                                    content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 연결 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
+                                }
+                            }],
+                            actor_type: 'system'
+                        }).catch(notifyError => {
+                            console.error('[Freshchat] Failed to send error notification:', notifyError.message);
+                        });
+                    } catch (notificationError) {
+                        console.error('[Freshchat] Error while sending failure notification:', notificationError.message);
+                    }
+                }
+
                 return res.sendStatus(200);
             }
 
