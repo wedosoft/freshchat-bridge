@@ -1031,6 +1031,7 @@ class FreshchatClient {
         // 부서 추가 (Freshchat 커스텀 필드)
         if (userProfile.department) {
             createPayload.cf_field2556 = userProfile.department;
+            console.log(`[Freshchat] Adding department to user: ${userProfile.department}`);
         }
 
         // Teams 프로필 정보를 properties에 추가
@@ -1068,6 +1069,13 @@ class FreshchatClient {
         console.log(`[Freshchat] Create payload:`, JSON.stringify(createPayload, null, 2));
         const createResponse = await this.axiosInstance.post('/users', createPayload);
 
+        console.log(`[Freshchat] User created successfully:`, JSON.stringify({
+            id: createResponse.data.id,
+            email: createResponse.data.email,
+            cf_field2556: createResponse.data.cf_field2556,
+            first_name: createResponse.data.first_name
+        }, null, 2));
+
         console.log(`[Freshchat] User created: ${createResponse.data.id} ${email ? `with email: ${email}` : '(no email)'}`);
         return createResponse.data;
     }
@@ -1094,6 +1102,7 @@ class FreshchatClient {
             // 부서 추가 (Freshchat 커스텀 필드)
             if (userProfile.department) {
                 updatePayload.cf_field2556 = userProfile.department;
+                console.log(`[Freshchat] Updating department for user: ${userProfile.department}`);
             }
 
             // Teams 프로필 정보를 properties에 추가
@@ -1144,8 +1153,12 @@ class FreshchatClient {
             updatePayload.properties = properties;
 
             console.log(`[Freshchat] Update payload:`, JSON.stringify(updatePayload, null, 2));
-            await this.axiosInstance.put(`/users/${userId}`, updatePayload);
-            console.log(`[Freshchat] User profile updated successfully: ${userId}`);
+            const updateResponse = await this.axiosInstance.put(`/users/${userId}`, updatePayload);
+            console.log(`[Freshchat] User profile updated successfully:`, JSON.stringify({
+                id: userId,
+                cf_field2556: updateResponse.data?.cf_field2556,
+                email: updateResponse.data?.email
+            }, null, 2));
         } catch (error) {
             console.error(`[Freshchat] Failed to update user profile ${userId}:`, error.response?.data || error.message);
             throw error;
