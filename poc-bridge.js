@@ -1028,14 +1028,25 @@ class FreshchatClient {
             const conversation = response.data;
 
             if (conversation.properties) {
-                const teamsConvIdProp = conversation.properties.find(p => p.name === 'teams_conversation_id');
-                const teamsRefProp = conversation.properties.find(p => p.name === 'teams_conversation_reference');
+                // Handle both array and object formats
+                let teamsConvId, teamsRef;
 
-                if (teamsConvIdProp && teamsRefProp) {
+                if (Array.isArray(conversation.properties)) {
+                    const teamsConvIdProp = conversation.properties.find(p => p.name === 'teams_conversation_id');
+                    const teamsRefProp = conversation.properties.find(p => p.name === 'teams_conversation_reference');
+                    teamsConvId = teamsConvIdProp?.value;
+                    teamsRef = teamsRefProp?.value;
+                } else {
+                    // Properties is an object
+                    teamsConvId = conversation.properties.teams_conversation_id;
+                    teamsRef = conversation.properties.teams_conversation_reference;
+                }
+
+                if (teamsConvId && teamsRef) {
                     console.log(`[Freshchat] ✅ Found Teams data in conversation ${conversationId}`);
                     return {
-                        teamsConvId: teamsConvIdProp.value,
-                        conversationReference: JSON.parse(teamsRefProp.value)
+                        teamsConvId,
+                        conversationReference: JSON.parse(teamsRef)
                     };
                 }
             }
