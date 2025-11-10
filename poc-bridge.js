@@ -3017,26 +3017,54 @@ app.post('/freshchat/webhook', async (req, res) => {
                 // Notify agent about delivery failure (only for agent messages)
                 if (actorType === 'agent') {
                     try {
-                        const notifyConversationId = conversationGuid || freshchatConversationId;
-                        console.log(`[Freshchat] Sending delivery failure notification to conversation: ${notifyConversationId}`);
-                        await freshchatClient.axiosInstance.post(`/conversations/${notifyConversationId}/messages`, {
-                            message_parts: [{
-                                text: {
-                                    content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 매핑 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
-                                }
-                            }],
-                            actor_type: 'system'
-                        }).catch(notifyError => {
-                            // 404는 대화가 없는 것이므로 무시 (다른 채널에서 시작된 대화)
-                            if (notifyError.response?.status !== 404) {
-                                console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
+                        // Freshchat API는 숫자 ID를 우선 사용
+                        let notificationSent = false;
+                        
+                        // 1차 시도: 숫자 ID 사용
+                        if (freshchatConversationId) {
+                            try {
+                                console.log(`[Freshchat] Sending delivery failure notification to conversation (numeric ID): ${freshchatConversationId}`);
+                                await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                                    message_parts: [{
+                                        text: {
+                                            content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 매핑 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
+                                        }
+                                    }],
+                                    actor_type: 'system'
+                                });
+                                notificationSent = true;
+                                console.log(`[Freshchat] ✅ Delivery failure notification sent successfully (numeric ID)`);
+                            } catch (numericError) {
+                                console.warn(`[Freshchat] Failed with numeric ID (${numericError.response?.status}): ${numericError.message}`);
                             }
-                        });
-                    } catch (notificationError) {
-                        // 404는 대화가 없는 것이므로 무시
-                        if (notificationError.response?.status !== 404) {
-                            console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
                         }
+                        
+                        // 2차 시도: GUID 사용 (1차 실패 시)
+                        if (!notificationSent && conversationGuid) {
+                            try {
+                                console.log(`[Freshchat] Retrying delivery failure notification with GUID: ${conversationGuid}`);
+                                await freshchatClient.axiosInstance.post(`/conversations/${conversationGuid}/messages`, {
+                                    message_parts: [{
+                                        text: {
+                                            content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 매핑 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
+                                        }
+                                    }],
+                                    actor_type: 'system'
+                                });
+                                notificationSent = true;
+                                console.log(`[Freshchat] ✅ Delivery failure notification sent successfully (GUID)`);
+                            } catch (guidError) {
+                                console.warn(`[Freshchat] Failed with GUID (${guidError.response?.status}): ${guidError.message}`);
+                            }
+                        }
+                        
+                        if (!notificationSent) {
+                            console.error(`[Freshchat] ❌ CRITICAL: Could not send delivery failure notification to agent`);
+                            console.error(`[Freshchat] ❌ Agent will NOT know that message delivery failed!`);
+                            console.error(`[Freshchat] ❌ Conversation IDs tried: numeric=${freshchatConversationId}, guid=${conversationGuid}`);
+                        }
+                    } catch (notificationError) {
+                        console.error(`[Freshchat] ❌ CRITICAL: Unexpected error sending failure notification:`, notificationError.message);
                     }
                 }
 
@@ -3056,20 +3084,53 @@ app.post('/freshchat/webhook', async (req, res) => {
                 // Notify agent about missing conversation reference (only for agent messages)
                 if (actorType === 'agent') {
                     try {
-                        const notifyConversationId = conversationGuid || freshchatConversationId;
-                        console.log(`[Freshchat] Sending missing reference notification to conversation: ${notifyConversationId}`);
-                        await freshchatClient.axiosInstance.post(`/conversations/${notifyConversationId}/messages`, {
-                            message_parts: [{
-                                text: {
-                                    content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 연결 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
-                                }
-                            }],
-                            actor_type: 'system'
-                        }).catch(notifyError => {
-                            console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
-                        });
+                        let notificationSent = false;
+                        
+                        // 1차 시도: 숫자 ID 사용
+                        if (freshchatConversationId) {
+                            try {
+                                console.log(`[Freshchat] Sending missing reference notification to conversation (numeric ID): ${freshchatConversationId}`);
+                                await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                                    message_parts: [{
+                                        text: {
+                                            content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 연결 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
+                                        }
+                                    }],
+                                    actor_type: 'system'
+                                });
+                                notificationSent = true;
+                                console.log(`[Freshchat] ✅ Missing reference notification sent successfully (numeric ID)`);
+                            } catch (numericError) {
+                                console.warn(`[Freshchat] Failed with numeric ID (${numericError.response?.status}): ${numericError.message}`);
+                            }
+                        }
+                        
+                        // 2차 시도: GUID 사용 (1차 실패 시)
+                        if (!notificationSent && conversationGuid) {
+                            try {
+                                console.log(`[Freshchat] Retrying missing reference notification with GUID: ${conversationGuid}`);
+                                await freshchatClient.axiosInstance.post(`/conversations/${conversationGuid}/messages`, {
+                                    message_parts: [{
+                                        text: {
+                                            content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 연결 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
+                                        }
+                                    }],
+                                    actor_type: 'system'
+                                });
+                                notificationSent = true;
+                                console.log(`[Freshchat] ✅ Missing reference notification sent successfully (GUID)`);
+                            } catch (guidError) {
+                                console.warn(`[Freshchat] Failed with GUID (${guidError.response?.status}): ${guidError.message}`);
+                            }
+                        }
+                        
+                        if (!notificationSent) {
+                            console.error(`[Freshchat] ❌ CRITICAL: Could not send missing reference notification to agent`);
+                            console.error(`[Freshchat] ❌ Agent will NOT know that message delivery failed!`);
+                            console.error(`[Freshchat] ❌ Conversation IDs tried: numeric=${freshchatConversationId}, guid=${conversationGuid}`);
+                        }
                     } catch (notificationError) {
-                        console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
+                        console.error(`[Freshchat] ❌ CRITICAL: Unexpected error sending failure notification:`, notificationError.message);
                     }
                 }
 
@@ -3515,30 +3576,52 @@ app.post('/freshchat/webhook', async (req, res) => {
             if (freshchatConversationId) {
                 const errorMessage = error.message || 'Unknown error';
                 const errorStatus = error.response?.status || 'N/A';
-                const notifyConversationId = conversationGuid || freshchatConversationId;
+                let notificationSent = false;
 
-                console.log(`[Freshchat] Sending delivery failure notification to conversation: ${notifyConversationId}`);
+                // 1차 시도: 숫자 ID 사용
+                try {
+                    console.log(`[Freshchat] Sending delivery failure notification to conversation (numeric ID): ${freshchatConversationId}`);
+                    await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                        message_parts: [{
+                            text: {
+                                content: `⚠️ **Teams 메시지 전송 실패**\n\n사용자에게 메시지를 전달하지 못했습니다.\n\n**오류**: ${errorMessage}\n**상태 코드**: ${errorStatus}\n\n사용자가 Teams에서 새로운 메시지를 보내면 다시 시도됩니다.`
+                            }
+                        }],
+                        actor_type: 'system'
+                    });
+                    notificationSent = true;
+                    console.log(`[Freshchat] ✅ Delivery failure notification sent successfully (numeric ID)`);
+                } catch (numericError) {
+                    console.warn(`[Freshchat] Failed with numeric ID (${numericError.response?.status}): ${numericError.message}`);
+                }
 
-                await freshchatClient.axiosInstance.post(`/conversations/${notifyConversationId}/messages`, {
-                    message_parts: [{
-                        text: {
-                            content: `⚠️ **Teams 메시지 전송 실패**\n\n사용자에게 메시지를 전달하지 못했습니다.\n\n**오류**: ${errorMessage}\n**상태 코드**: ${errorStatus}\n\n사용자가 Teams에서 새로운 메시지를 보내면 다시 시도됩니다.`
-                        }
-                    }],
-                    actor_type: 'system'
-                }).catch(notifyError => {
-                    // 404는 대화가 없는 것이므로 무시 (다른 채널에서 시작된 대화)
-                    if (notifyError.response?.status !== 404) {
-                        console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
+                // 2차 시도: GUID 사용 (1차 실패 시)
+                if (!notificationSent && conversationGuid) {
+                    try {
+                        console.log(`[Freshchat] Retrying delivery failure notification with GUID: ${conversationGuid}`);
+                        await freshchatClient.axiosInstance.post(`/conversations/${conversationGuid}/messages`, {
+                            message_parts: [{
+                                text: {
+                                    content: `⚠️ **Teams 메시지 전송 실패**\n\n사용자에게 메시지를 전달하지 못했습니다.\n\n**오류**: ${errorMessage}\n**상태 코드**: ${errorStatus}\n\n사용자가 Teams에서 새로운 메시지를 보내면 다시 시도됩니다.`
+                                }
+                            }],
+                            actor_type: 'system'
+                        });
+                        notificationSent = true;
+                        console.log(`[Freshchat] ✅ Delivery failure notification sent successfully (GUID)`);
+                    } catch (guidError) {
+                        console.warn(`[Freshchat] Failed with GUID (${guidError.response?.status}): ${guidError.message}`);
                     }
-                });
+                }
+                
+                if (!notificationSent) {
+                    console.error(`[Freshchat] ❌ CRITICAL: Could not send delivery failure notification to agent`);
+                    console.error(`[Freshchat] ❌ Agent will NOT know that Teams message delivery failed!`);
+                    console.error(`[Freshchat] ❌ Conversation IDs tried: numeric=${freshchatConversationId}, guid=${conversationGuid}`);
+                }
             }
         } catch (notificationError) {
-            // 404는 대화가 없는 것이므로 무시
-            if (notificationError.response?.status !== 404) {
-                console.error(`[Freshchat] Error sending delivery failure notification:`, notificationError.message);
-            }
-            console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
+            console.error(`[Freshchat] ❌ CRITICAL: Unexpected error sending failure notification:`, notificationError.message);
         }
 
         res.sendStatus(500);
