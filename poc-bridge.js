@@ -3,6 +3,7 @@
  *
  * This is a proof-of-concept implementation demonstrating real-time
  * message transfer between Microsoft Teams and Freshchat.
+ * Updated: 2025-11-10
  */
 
 require('dotenv').config();
@@ -16,6 +17,7 @@ const { URL } = require('url');
 const fs = require('fs');
 const path = require('path');
 const { BotFrameworkAdapter, TurnContext, TeamsInfo, CardFactory, AttachmentLayoutTypes } = require('botbuilder');
+const Redis = require('ioredis');
 
 // Fix for Azure SDK crypto issue in Node.js 18+
 if (!global.crypto) {
@@ -43,6 +45,9 @@ const PUBLIC_URL = process.env.PUBLIC_URL;
 const CUSTOM_GREETING_MESSAGE = (process.env.CUSTOM_GREETING_MESSAGE || '').trim();
 const CUSTOM_GREETING_ENABLED = process.env.CUSTOM_GREETING_ENABLED === 'true'
     && CUSTOM_GREETING_MESSAGE.length > 0;
+const REDIS_URL = process.env.REDIS_URL || '';
+const REDIS_PREFIX = process.env.REDIS_PREFIX || 'freshchat_bridge';
+const CONVERSATION_TTL_SECONDS = Number.parseInt(process.env.CONVERSATION_TTL_SECONDS || '2592000', 10);
 
 // ============================================================================
 // File Storage Setup
@@ -57,16 +62,274 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 // In-Memory Storage
 // ============================================================================
 
-/**
- * Maps Teams conversation IDs to Freshchat conversation IDs
- * Structure: { teamsConversationId: { freshchatConvId, conversationReference } }
- */
-const conversationMap = new Map();
+let redisClient = null;
+if (REDIS_URL) {
+    redisClient = new Redis(REDIS_URL, {
+        lazyConnect: true,
+        maxRetriesPerRequest: 2,
+        enableOfflineQueue: false
+    });
 
-/**
- * Reverse map: Freshchat conversation ID to Teams conversation ID
- */
-const reverseMap = new Map();
+    redisClient.on('connect', () => {
+        console.log(`[Redis] Connected to server (prefix=${REDIS_PREFIX})`);
+    });
+
+    redisClient.on('error', (err) => {
+        console.error(`[Redis] Connection error:`, err.message);
+    });
+
+    redisClient.connect().catch((err) => {
+        console.error(`[Redis] Initial connection failed:`, err.message);
+    });
+} else {
+    console.log(`[Redis] No REDIS_URL provided - falling back to in-memory conversation store`);
+}
+
+class ConversationStore {
+    constructor(redisInstance, options = {}) {
+        this.redis = redisInstance;
+        this.prefix = options.prefix || 'freshchat_bridge';
+        this.ttlSeconds = options.ttlSeconds || (30 * 24 * 60 * 60);
+        this.memory = new Map();
+        this.reverseMemory = new Map();
+        this.indexKey = `${this.prefix}:conversation:teams:index`;
+        this.reverseIndexKey = `${this.prefix}:conversation:freshchat:index`;
+    }
+
+    teamsKey(teamsId) {
+        return `${this.prefix}:conversation:teams:${teamsId}`;
+    }
+
+    reverseKey(freshchatId) {
+        return `${this.prefix}:conversation:freshchat:${freshchatId}`;
+    }
+
+    async get(teamsId) {
+        if (!teamsId) {
+            return null;
+        }
+
+        if (this.memory.has(teamsId)) {
+            return this.memory.get(teamsId);
+        }
+
+        if (!this.redis) {
+            return null;
+        }
+
+        try {
+            const raw = await this.redis.get(this.teamsKey(teamsId));
+            if (!raw) {
+                return null;
+            }
+
+            const parsed = JSON.parse(raw);
+            this.memory.set(teamsId, parsed);
+            await this.cacheReverseIds(teamsId, parsed);
+            return parsed;
+        } catch (error) {
+            console.warn(`[ConversationStore] Failed to load mapping for ${teamsId}:`, error.message);
+            return null;
+        }
+    }
+
+    async update(teamsId, updates) {
+        if (!teamsId) {
+            throw new Error('teamsConversationId is required');
+        }
+
+        const existing = await this.get(teamsId) || {};
+        const merged = { ...existing };
+
+        Object.entries(updates).forEach(([key, value]) => {
+            if (value !== undefined && value !== null) {
+                if (key === 'freshchatConversationGuid' || key === 'freshchatConversationNumericId') {
+                    merged[key] = String(value);
+                } else {
+                    merged[key] = value;
+                }
+            }
+        });
+
+        this.memory.set(teamsId, merged);
+        await this.cacheReverseIds(teamsId, merged);
+
+        if (this.redis) {
+            try {
+                await this.redis.multi()
+                    .set(this.teamsKey(teamsId), JSON.stringify(merged), 'EX', this.ttlSeconds)
+                    .sadd(this.indexKey, teamsId)
+                    .exec();
+            } catch (error) {
+                console.error(`[ConversationStore] Failed to persist mapping:`, error.message);
+            }
+        }
+
+        return merged;
+    }
+
+    async cacheReverseIds(teamsId, mapping) {
+        const tasks = [];
+
+        if (mapping.freshchatConversationGuid) {
+            const guid = String(mapping.freshchatConversationGuid);
+            this.reverseMemory.set(guid, teamsId);
+            tasks.push(this.persistReverseKey(guid, teamsId));
+        }
+
+        if (mapping.freshchatConversationNumericId) {
+            const numericId = String(mapping.freshchatConversationNumericId);
+            this.reverseMemory.set(numericId, teamsId);
+            tasks.push(this.persistReverseKey(numericId, teamsId));
+        }
+
+        await Promise.all(tasks);
+    }
+
+    async rememberFreshchatLink(freshchatId, teamsId) {
+        if (!freshchatId || !teamsId) {
+            return;
+        }
+        const normalized = String(freshchatId);
+        this.reverseMemory.set(normalized, teamsId);
+        await this.persistReverseKey(normalized, teamsId);
+    }
+
+    async persistReverseKey(freshchatId, teamsId) {
+        if (!this.redis || !freshchatId || !teamsId) {
+            return;
+        }
+
+        try {
+            await this.redis.multi()
+                .set(this.reverseKey(freshchatId), teamsId, 'EX', this.ttlSeconds)
+                .sadd(this.reverseIndexKey, freshchatId)
+                .exec();
+        } catch (error) {
+            console.error(`[ConversationStore] Failed to persist reverse mapping (${freshchatId}):`, error.message);
+        }
+    }
+
+    async getTeamsIdByFreshchat(freshchatId) {
+        if (!freshchatId) {
+            return null;
+        }
+
+        const normalized = String(freshchatId);
+
+        if (this.reverseMemory.has(normalized)) {
+            return this.reverseMemory.get(normalized);
+        }
+
+        if (!this.redis) {
+            return null;
+        }
+
+        try {
+            const teamsId = await this.redis.get(this.reverseKey(normalized));
+            if (teamsId) {
+                this.reverseMemory.set(normalized, teamsId);
+            }
+            return teamsId;
+        } catch (error) {
+            console.warn(`[ConversationStore] Failed to load reverse mapping for ${freshchatId}:`, error.message);
+            return null;
+        }
+    }
+
+    async count() {
+        if (this.redis) {
+            try {
+                return await this.redis.scard(this.indexKey);
+            } catch (error) {
+                console.warn(`[ConversationStore] Failed to count Redis mappings:`, error.message);
+                return this.memory.size;
+            }
+        }
+        return this.memory.size;
+    }
+
+    async list(limit = 50) {
+        if (this.redis) {
+            try {
+                const ids = await this.redis.smembers(this.indexKey);
+                const limitedIds = ids.slice(0, limit);
+                const results = [];
+
+                for (const id of limitedIds) {
+                    const mapping = await this.get(id);
+                    if (mapping) {
+                        results.push({
+                            teamsConversationId: id,
+                            mapping
+                        });
+                    }
+                }
+
+                return results;
+            } catch (error) {
+                console.warn(`[ConversationStore] Failed to list mappings from Redis:`, error.message);
+            }
+        }
+
+        return Array.from(this.memory.entries())
+            .slice(0, limit)
+            .map(([teamsConversationId, mapping]) => ({
+                teamsConversationId,
+                mapping
+            }));
+    }
+
+    async clearAll() {
+        this.memory.clear();
+        this.reverseMemory.clear();
+
+        if (!this.redis) {
+            return;
+        }
+
+        try {
+            const [teamIds, freshchatIds] = await Promise.all([
+                this.redis.smembers(this.indexKey),
+                this.redis.smembers(this.reverseIndexKey)
+            ]);
+
+            const keysToDelete = [
+                ...teamIds.map((id) => this.teamsKey(id)),
+                ...freshchatIds.map((id) => this.reverseKey(id))
+            ];
+
+            if (keysToDelete.length > 0) {
+                await this.redis.del(...keysToDelete);
+            }
+
+            await this.redis.del(this.indexKey, this.reverseIndexKey);
+            console.log(`[ConversationStore] Redis mappings cleared`);
+        } catch (error) {
+            console.error(`[ConversationStore] Failed to clear Redis mappings:`, error.message);
+        }
+    }
+
+    getLocalSnapshot(limit = 25) {
+        return Array.from(this.memory.entries())
+            .slice(0, limit)
+            .map(([teamsConversationId, mapping]) => ({
+                teamsConversationId,
+                mapping
+            }));
+    }
+
+    get localSize() {
+        return this.memory.size;
+    }
+}
+
+const conversationStore = new ConversationStore(redisClient, {
+    prefix: REDIS_PREFIX,
+    ttlSeconds: Number.isFinite(CONVERSATION_TTL_SECONDS) && CONVERSATION_TTL_SECONDS > 0
+        ? CONVERSATION_TTL_SECONDS
+        : 30 * 24 * 60 * 60
+});
 
 /**
  * Track processed Freshchat message IDs to avoid duplicate delivery.
@@ -137,31 +400,8 @@ function markFreshchatMessageProcessed(messageId) {
     cleanupProcessedFreshchatMessages();
 }
 
-function updateConversationMapping(teamsConversationId, updates) {
-    const existing = conversationMap.get(teamsConversationId) || {};
-    const merged = { ...existing };
-
-    Object.entries(updates).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-            if (key === 'freshchatConversationGuid' || key === 'freshchatConversationNumericId') {
-                merged[key] = String(value);
-            } else {
-                merged[key] = value;
-            }
-        }
-    });
-
-    conversationMap.set(teamsConversationId, merged);
-
-    if (merged.freshchatConversationGuid) {
-        reverseMap.set(merged.freshchatConversationGuid, teamsConversationId);
-    }
-
-    if (merged.freshchatConversationNumericId) {
-        reverseMap.set(String(merged.freshchatConversationNumericId), teamsConversationId);
-    }
-
-    return merged;
+async function updateConversationMapping(teamsConversationId, updates) {
+    return conversationStore.update(teamsConversationId, updates);
 }
 
 function resolveFreshchatConversationId(mapping) {
@@ -220,7 +460,7 @@ function buildFreshchatMessageParts(message, attachments = []) {
             const safeName = attachment.name || attachment.file_name || 'attachment';
 
             if (!fileHash && !fileId) {
-                console.warn('[Freshchat] Skipping attachment without file identifier', {
+                console.warn(`[Freshchat] Skipping attachment without file identifier`, {
                     name: attachment.name,
                     keys: Object.keys(attachment)
                 });
@@ -521,7 +761,7 @@ class FreshsalesClient {
     async upsertContact(email, contactData) {
         try {
             console.log(`[Freshsales] Upserting contact for email: ${email}`);
-            console.log('[Freshsales] Contact data:', JSON.stringify(contactData, null, 2));
+            console.log(`[Freshsales] Contact data:`, JSON.stringify(contactData, null, 2));
 
             // Build contact payload with standard fields only
             const contact = {
@@ -557,13 +797,13 @@ class FreshsalesClient {
 
             try {
                 const response = await this.axiosInstance.post('/contacts/upsert', payload);
-                console.log('[Freshsales] Upsert successful:', JSON.stringify(response.data, null, 2));
+                console.log(`[Freshsales] Upsert successful:`, JSON.stringify(response.data, null, 2));
                 return response.data;
             } catch (firstError) {
                 // If phone number duplication error, retry without phone numbers
                 if (firstError.response?.status === 400 && 
                     firstError.response?.data?.errors?.message?.includes('이미 존재합니다')) {
-                    console.log('[Freshsales] Phone number conflict detected, retrying without phone numbers');
+                    console.log(`[Freshsales] Phone number conflict detected, retrying without phone numbers`);
                     
                     // Remove phone numbers and retry
                     delete contact.mobile_number;
@@ -584,7 +824,7 @@ class FreshsalesClient {
                 }
             }
         } catch (error) {
-            console.error('[Freshsales] Upsert failed:', {
+            console.error(`[Freshsales] Upsert failed:`, {
                 email,
                 status: error.response?.status,
                 statusText: error.response?.statusText,
@@ -703,7 +943,7 @@ class FreshchatClient {
             }
             return conversationResponse.data;
         } catch (error) {
-            console.error('[Freshchat] Error creating conversation:', error.response?.data || error.message);
+            console.error(`[Freshchat] Error creating conversation:`, error.response?.data || error.message);
             throw error;
         }
     }
@@ -1021,42 +1261,63 @@ class FreshchatClient {
 
     /**
      * Get Teams conversation data from Freshchat conversation properties
+     * Allows an optional fallback ID (numeric) when the primary lookup uses GUID.
      */
-    async getConversationTeamsData(conversationId) {
-        try {
-            const response = await this.axiosInstance.get(`/conversations/${conversationId}`);
-            const conversation = response.data;
-
-            if (conversation.properties) {
-                // Handle both array and object formats
-                let teamsConvId, teamsRef;
-
-                if (Array.isArray(conversation.properties)) {
-                    const teamsConvIdProp = conversation.properties.find(p => p.name === 'teams_conversation_id');
-                    const teamsRefProp = conversation.properties.find(p => p.name === 'teams_conversation_reference');
-                    teamsConvId = teamsConvIdProp?.value;
-                    teamsRef = teamsRefProp?.value;
-                } else {
-                    // Properties is an object
-                    teamsConvId = conversation.properties.teams_conversation_id;
-                    teamsRef = conversation.properties.teams_conversation_reference;
-                }
-
-                if (teamsConvId && teamsRef) {
-                    console.log(`[Freshchat] ✅ Found Teams data in conversation ${conversationId}`);
-                    return {
-                        teamsConvId,
-                        conversationReference: JSON.parse(teamsRef)
-                    };
-                }
+    async getConversationTeamsData(primaryConversationId, fallbackConversationId = null) {
+        const fetchConversation = async (conversationId, label) => {
+            if (!conversationId) {
+                return null;
             }
 
-            console.log(`[Freshchat] No Teams data found in conversation ${conversationId}`);
-            return null;
-        } catch (error) {
-            console.error(`[Freshchat] Failed to get Teams data from conversation:`, error.response?.data || error.message);
-            return null;
+            try {
+                console.log(`[Freshchat] Fetching conversation (${label}): ${conversationId}`);
+                const response = await this.axiosInstance.get(`/conversations/${conversationId}`);
+                const conversation = response.data;
+
+                if (conversation.properties) {
+                    // Handle both array and object formats
+                    let teamsConvId, teamsRef;
+
+                    if (Array.isArray(conversation.properties)) {
+                        const teamsConvIdProp = conversation.properties.find((p) => p.name === 'teams_conversation_id');
+                        const teamsRefProp = conversation.properties.find((p) => p.name === 'teams_conversation_reference');
+                        teamsConvId = teamsConvIdProp?.value;
+                        teamsRef = teamsRefProp?.value;
+                    } else {
+                        // Properties is an object
+                        teamsConvId = conversation.properties.teams_conversation_id;
+                        teamsRef = conversation.properties.teams_conversation_reference;
+                    }
+
+                    if (teamsConvId && teamsRef) {
+                        console.log(`[Freshchat] ✅ Found Teams data in conversation ${conversationId}`);
+                        return {
+                            teamsConvId,
+                            conversationReference: JSON.parse(teamsRef)
+                        };
+                    }
+                }
+
+                console.log(`[Freshchat] No Teams data found in conversation ${conversationId}`);
+                return null;
+            } catch (error) {
+                if (error.response?.status === 404) {
+                    console.warn(`[Freshchat] Conversation lookup (${label}) returned 404 for ${conversationId}`);
+                } else {
+                    console.error(`[Freshchat] Failed to get Teams data from conversation (${label}):`, error.response?.data || error.message);
+                }
+                return null;
+            }
+        };
+
+        let result = await fetchConversation(primaryConversationId, 'primary');
+
+        if (!result && fallbackConversationId && fallbackConversationId !== primaryConversationId) {
+            console.log(`[Freshchat] Retrying conversation lookup with fallback ID: ${fallbackConversationId}`);
+            result = await fetchConversation(fallbackConversationId, 'fallback');
         }
+
+        return result;
     }
 
     /**
@@ -1084,7 +1345,7 @@ class FreshchatClient {
             console.log(`[Freshchat] File uploaded successfully:`, response.data);
             return response.data;
         } catch (error) {
-            console.error('[Freshchat] Error uploading file:', error.response?.data || error.message);
+            console.error(`[Freshchat] Error uploading file:`, error.response?.data || error.message);
             throw error;
         }
     }
@@ -1201,7 +1462,7 @@ class FreshchatClient {
             }
 
             console.log(`[Freshchat] Sending message to conversation: ${conversationId}`);
-            console.log('[Freshchat] Outgoing message payload:', {
+            console.log(`[Freshchat] Outgoing message payload:`, {
                 conversationId,
                 actorId: userId,
                 hasText: Boolean(message),
@@ -1247,17 +1508,17 @@ class FreshchatClient {
                 );
 
                 if (detailedMessage) {
-                    console.log('[Freshchat] Message details:', JSON.stringify(detailedMessage, null, 2));
+                    console.log(`[Freshchat] Message details:`, JSON.stringify(detailedMessage, null, 2));
                 } else {
-                    console.warn('[Freshchat] Unable to fetch message details for attachment logging');
+                    console.warn(`[Freshchat] Unable to fetch message details for attachment logging`);
                 }
             }
 
             return response.data;
         } catch (error) {
-            console.error('[Freshchat] Error sending message:', error.response?.data || error.message);
+            console.error(`[Freshchat] Error sending message:`, error.response?.data || error.message);
             if (error.response) {
-                console.error('[Freshchat] Error response details:', {
+                console.error(`[Freshchat] Error response details:`, {
                     status: error.response.status,
                     statusText: error.response.statusText,
                     headers: error.response.headers,
@@ -1315,7 +1576,7 @@ class FreshchatClient {
                 if (asciiMatch && asciiMatch[1]) {
                     filename = asciiMatch[1];
                 } else {
-                    console.warn('[Freshchat] Unable to fetch hydrated message details for attachments');
+                    console.warn(`[Freshchat] Unable to fetch hydrated message details for attachments`);
                 }
             }
 
@@ -1328,7 +1589,7 @@ class FreshchatClient {
         } catch (error) {
             const status = error.response?.status;
             const statusText = error.response?.statusText || error.message;
-            console.error('[Freshchat] Error downloading file:', status, statusText);
+            console.error(`[Freshchat] Error downloading file:`, status, statusText);
             throw error;
         }
     }
@@ -1662,7 +1923,7 @@ async function downloadTeamsAttachment(context, attachment, normalizedContentTyp
         }
     }
 
-    console.error('[Teams] Error downloading attachment:', lastError?.message || 'Unknown error');
+    console.error(`[Teams] Error downloading attachment:`, lastError?.message || 'Unknown error');
     throw lastError || new Error('Unable to download attachment');
 }
 
@@ -1676,7 +1937,7 @@ async function collectTeamsUserProfile(context) {
     // Check cache first
     const cached = userProfileCache.get(userId);
     if (cached && (Date.now() - cached.timestamp) < USER_PROFILE_CACHE_TTL_MS) {
-        console.log('[Teams] Using cached profile for user:', userId);
+        console.log(`[Teams] Using cached profile for user:`, userId);
         return cached.profile;
     }
 
@@ -1692,7 +1953,7 @@ async function collectTeamsUserProfile(context) {
             const member = await TeamsInfo.getMember(context, activity.from.id);
 
             if (member) {
-                console.log('[Teams] Member info retrieved');
+                console.log(`[Teams] Member info retrieved`);
 
                 if (member.name) userProfile.displayName = member.name;
                 if (member.email) userProfile.email = member.email;
@@ -1734,10 +1995,10 @@ async function collectTeamsUserProfile(context) {
                 }
             }
         } catch (memberError) {
-            console.warn('[Teams] Could not retrieve member info:', memberError.message);
+            console.warn(`[Teams] Could not retrieve member info:`, memberError.message);
         }
 
-        console.log('[Teams] User profile collected:', JSON.stringify(userProfile, null, 2));
+        console.log(`[Teams] User profile collected:`, JSON.stringify(userProfile, null, 2));
         
         // Cache the profile
         userProfileCache.set(userId, {
@@ -1745,7 +2006,7 @@ async function collectTeamsUserProfile(context) {
             timestamp: Date.now()
         });
     } catch (error) {
-        console.error('[Teams] Error collecting user profile:', error.message);
+        console.error(`[Teams] Error collecting user profile:`, error.message);
     }
 
     return userProfile;
@@ -1808,7 +2069,7 @@ async function handleTeamsMessage(context) {
 
     // Check if we already have a Freshchat conversation for this Teams conversation
     const teamsConvId = activity.conversation.id;
-    let mapping = conversationMap.get(teamsConvId);
+    let mapping = await conversationStore.get(teamsConvId);
 
     try {
         const trimmedMessageText = typeof activity.text === 'string' ? activity.text.trim() : '';
@@ -2001,7 +2262,7 @@ async function handleTeamsMessage(context) {
                     address: userProfile.officeLocation || null  // 회사 위치 → address 필드
                 });
             } catch (freshsalesError) {
-                console.error('[Freshsales] Contact upsert failed:', freshsalesError.message);
+                console.error(`[Freshsales] Contact upsert failed:`, freshsalesError.message);
             }
         }
 
@@ -2029,7 +2290,7 @@ async function handleTeamsMessage(context) {
                 throw new Error('Freshchat API response is missing conversation identifiers');
             }
 
-            mapping = updateConversationMapping(teamsConvId, {
+            mapping = await updateConversationMapping(teamsConvId, {
                 freshchatConversationGuid,
                 freshchatConversationNumericId,
                 freshchatUserId: freshchatConv.user_id,
@@ -2039,18 +2300,18 @@ async function handleTeamsMessage(context) {
             console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${resolveFreshchatConversationId(mapping)})`);
 
             // Store Teams data in Freshchat conversation properties (async, non-blocking)
-            const conversationIdToUpdate = freshchatConversationGuid || freshchatConversationNumericId;
+            const conversationIdToUpdate = freshchatConversationNumericId || freshchatConversationGuid;
             if (conversationIdToUpdate) {
                 freshchatClient.updateConversationTeamsData(
                     conversationIdToUpdate,
                     teamsConvId,
                     mapping.conversationReference
-                ).catch(err => console.warn('[Freshchat] Background conversation update failed:', err.message));
+                ).catch(err => console.warn(`[Freshchat] Background conversation update failed:`, err.message));
             }
 
             // Also store Teams conversation ID in Freshchat user properties (async, non-blocking)
             freshchatClient.updateUserTeamsConversation(freshchatConv.user_id, teamsConvId)
-                .catch(err => console.warn('[Freshchat] Background profile update failed:', err.message));
+                .catch(err => console.warn(`[Freshchat] Background profile update failed:`, err.message));
 
             if (freshchatConversationGuid && !freshchatConversationNumericId) {
                 console.log('[Mapping] Waiting for numeric Freshchat conversation ID from webhook payload');
@@ -2058,19 +2319,19 @@ async function handleTeamsMessage(context) {
         } else {
             // Existing conversation - Update conversationReference to track latest active thread
             const latestConversationReference = TurnContext.getConversationReference(activity);
-            mapping = updateConversationMapping(teamsConvId, {
+            mapping = await updateConversationMapping(teamsConvId, {
                 conversationReference: latestConversationReference
             });
             console.log(`[Mapping] Updated conversationReference to latest thread: ${teamsConvId}`);
 
             // Update Teams data in Freshchat conversation properties (async, non-blocking)
-            const conversationIdToUpdate = mapping.freshchatConversationGuid || mapping.freshchatConversationNumericId;
+            const conversationIdToUpdate = mapping.freshchatConversationNumericId || mapping.freshchatConversationGuid;
             if (conversationIdToUpdate) {
                 freshchatClient.updateConversationTeamsData(
                     conversationIdToUpdate,
                     teamsConvId,
                     latestConversationReference
-                ).catch(err => console.warn('[Freshchat] Background conversation update failed:', err.message));
+                ).catch(err => console.warn(`[Freshchat] Background conversation update failed:`, err.message));
             }
 
             // Update Freshchat user profile with latest Teams info
@@ -2084,7 +2345,7 @@ async function handleTeamsMessage(context) {
                         userProfile
                     );
                 } catch (updateError) {
-                    console.warn('[Freshchat] Failed to update user profile:', updateError.message);
+                    console.warn(`[Freshchat] Failed to update user profile:`, updateError.message);
                 }
             }
 
@@ -2202,17 +2463,34 @@ app.use((req, res, next) => {
 /**
  * Health check endpoint
  */
-app.get('/', (req, res) => {
-    res.json({
-        status: 'running',
-        service: 'Teams ↔ Freshchat Bridge (PoC)',
-        timestamp: new Date().toISOString(),
-        mappings: {
-            active: conversationMap.size,
-            teams_to_freshchat: Array.from(conversationMap.keys()),
-            freshchat_to_teams: Array.from(reverseMap.keys())
-        }
-    });
+app.get('/', async (req, res) => {
+    try {
+        const [activeCount, sampleMappings] = await Promise.all([
+            conversationStore.count(),
+            conversationStore.list(10)
+        ]);
+
+        res.json({
+            status: 'running',
+            service: 'Teams ↔ Freshchat Bridge (PoC)',
+            timestamp: new Date().toISOString(),
+            mappings: {
+                active: activeCount,
+                sample: sampleMappings.map((entry) => ({
+                    teamsConversationId: entry.teamsConversationId,
+                    freshchatConversationId: entry.mapping.freshchatConversationNumericId || null,
+                    freshchatConversationGuid: entry.mapping.freshchatConversationGuid || null
+                })),
+                localCacheSize: conversationStore.localSize
+            }
+        });
+    } catch (error) {
+        console.error('[Health] Failed to assemble status:', error.message);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to retrieve mapping summary'
+        });
+    }
 });
 
 /**
@@ -2234,7 +2512,7 @@ async function getGraphAccessToken(tenantId = null) {
 
         return response.data.access_token;
     } catch (error) {
-        console.error('[Graph API] Failed to get access token:', error.response?.data || error.message);
+        console.error(`[Graph API] Failed to get access token:`, error.response?.data || error.message);
         throw error;
     }
 }
@@ -2296,7 +2574,7 @@ app.get('/tab-content', async (req, res) => {
         const htmlContent = await getHelpTabContent();
         res.send(htmlContent);
     } catch (error) {
-        console.error('[Tab Content] Error loading HTML:', error);
+        console.error(`[Tab Content] Error loading HTML:`, error);
 
         // Send fallback error page
         res.status(500).send(`
@@ -2359,7 +2637,7 @@ app.get('/tab-content', async (req, res) => {
  */
 app.post('/tab-content/refresh', async (req, res) => {
     try {
-        console.log('[Help Tab] Manual cache refresh requested');
+        console.log(`[Help Tab] Manual cache refresh requested`);
         helpTabCache = null; // Clear cache
         const content = await getHelpTabContent();
         res.json({
@@ -2369,7 +2647,7 @@ app.post('/tab-content/refresh', async (req, res) => {
             timestamp: new Date().toISOString()
         });
     } catch (error) {
-        console.error('[Help Tab] Cache refresh failed:', error);
+        console.error(`[Help Tab] Cache refresh failed:`, error);
         res.status(500).json({
             success: false,
             error: error.message
@@ -2402,7 +2680,7 @@ app.get('/auth/admin-consent/callback', (req, res) => {
     const { error, error_description, admin_consent, tenant } = req.query;
 
     if (error) {
-        console.error('[Admin Consent] Error:', error, error_description);
+        console.error(`[Admin Consent] Error:`, error, error_description);
         return res.send(`
 <!DOCTYPE html>
 <html lang="ko">
@@ -2580,10 +2858,10 @@ const processBotRequest = async (req, res) => {
         } else if (context.activity.type === 'conversationUpdate') {
             // Log conversation events
             if (context.activity.membersAdded) {
-                console.log('[Bot] Members added:', context.activity.membersAdded.length);
+                console.log(`[Bot] Members added:`, context.activity.membersAdded.length);
             }
             if (context.activity.membersRemoved) {
-                console.log('[Bot] Members removed:', context.activity.membersRemoved.length);
+                console.log(`[Bot] Members removed:`, context.activity.membersRemoved.length);
             }
             // Note: Freshchat conversation will be created on first user message
             // This allows Freshchat channel welcome message to trigger properly
@@ -2651,7 +2929,7 @@ app.post('/freshchat/webhook', async (req, res) => {
             console.log(`[Freshchat] Actor type: ${actorType}`);
 
             if (!freshchatConversationId) {
-                console.log('[Freshchat] Payload missing freshchat_conversation_id - cannot route message');
+                console.log(`[Freshchat] Payload missing freshchat_conversation_id - cannot route message`);
                 return res.sendStatus(200);
             }
 
@@ -2666,9 +2944,9 @@ app.post('/freshchat/webhook', async (req, res) => {
             }
 
             // Find corresponding Teams conversation
-            let teamsConvId = reverseMap.get(freshchatConversationId);
+            let teamsConvId = await conversationStore.getTeamsIdByFreshchat(freshchatConversationId);
             if (!teamsConvId && conversationGuid) {
-                teamsConvId = reverseMap.get(conversationGuid);
+                teamsConvId = await conversationStore.getTeamsIdByFreshchat(conversationGuid);
             }
 
             // If no mapping found in memory, try to restore from Freshchat conversation properties
@@ -2691,7 +2969,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                     console.log(`[Freshchat] ✅ Restored Teams conversation ID from conversation properties: ${teamsConvId}`);
 
                     // Restore full mapping to memory
-                    updateConversationMapping(teamsConvId, {
+                    await updateConversationMapping(teamsConvId, {
                         freshchatConversationGuid: conversationGuid || null,
                         freshchatConversationNumericId: freshchatConversationId,
                         conversationReference: teamsData.conversationReference
@@ -2708,10 +2986,10 @@ app.post('/freshchat/webhook', async (req, res) => {
                         if (teamsConvId) {
                             console.log(`[Freshchat] ⚠️ Found Teams conversation ID from user properties: ${teamsConvId}`);
                             console.log(`[Freshchat] ⚠️ Missing conversation reference - user needs to send a message to restore full mapping`);
-                            // Restore mapping to memory for future use
-                            reverseMap.set(freshchatConversationId, teamsConvId);
+                            // Restore mapping to memory/Redis for future use
+                            await conversationStore.rememberFreshchatLink(freshchatConversationId, teamsConvId);
                             if (conversationGuid) {
-                                reverseMap.set(conversationGuid, teamsConvId);
+                                await conversationStore.rememberFreshchatLink(conversationGuid, teamsConvId);
                             }
                         }
                     }
@@ -2736,17 +3014,17 @@ app.post('/freshchat/webhook', async (req, res) => {
                             }],
                             actor_type: 'system'
                         }).catch(notifyError => {
-                            console.error('[Freshchat] Failed to send error notification:', notifyError.message);
+                            console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
                         });
                     } catch (notificationError) {
-                        console.error('[Freshchat] Error while sending failure notification:', notificationError.message);
+                        console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
                     }
                 }
 
                 return res.sendStatus(200);
             }
 
-            let mapping = conversationMap.get(teamsConvId);
+            let mapping = await conversationStore.get(teamsConvId);
             if (!mapping) {
                 console.log(`[Freshchat] ⚠️  Mapping data missing for Teams conversation: ${teamsConvId}`);
                 console.log(`[Freshchat] ⚠️  Attempting to restore conversation reference...`);
@@ -2769,17 +3047,17 @@ app.post('/freshchat/webhook', async (req, res) => {
                             }],
                             actor_type: 'system'
                         }).catch(notifyError => {
-                            console.error('[Freshchat] Failed to send error notification:', notifyError.message);
+                            console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
                         });
                     } catch (notificationError) {
-                        console.error('[Freshchat] Error while sending failure notification:', notificationError.message);
+                        console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
                     }
                 }
 
                 return res.sendStatus(200);
             }
 
-            mapping = updateConversationMapping(teamsConvId, {
+            mapping = await updateConversationMapping(teamsConvId, {
                 freshchatConversationNumericId: freshchatConversationId,
                 freshchatConversationGuid: mapping.freshchatConversationGuid || (conversationGuid ? String(conversationGuid) : undefined)
             });
@@ -2797,7 +3075,7 @@ app.post('/freshchat/webhook', async (req, res) => {
                 && (primaryTextContent === '.' || primaryTextContent === '' || primaryTextContent === '•');
 
             if (isFreshchatWelcome) {
-                console.log('[Freshchat] Detected Freshchat system welcome message - suppressing default dot payload');
+                console.log(`[Freshchat] Detected Freshchat system welcome message - suppressing default dot payload`);
 
                 if (CUSTOM_GREETING_ENABLED && !mapping.greetingSent && mapping.conversationReference) {
                     try {
@@ -2807,10 +3085,10 @@ app.post('/freshchat/webhook', async (req, res) => {
                                 await turnContext.sendActivity(CUSTOM_GREETING_MESSAGE);
                             }
                         );
-                        updateConversationMapping(teamsConvId, { greetingSent: true });
-                        console.log('[Freshchat] Custom welcome message sent to Teams conversation');
+                        await updateConversationMapping(teamsConvId, { greetingSent: true });
+                        console.log(`[Freshchat] Custom welcome message sent to Teams conversation`);
                     } catch (proactiveError) {
-                        console.error('[Freshchat] Failed to send custom welcome message:', proactiveError.message);
+                        console.error(`[Freshchat] Failed to send custom welcome message:`, proactiveError.message);
                     }
                 }
 
@@ -2834,10 +3112,10 @@ app.post('/freshchat/webhook', async (req, res) => {
             const attachmentParts = [];
 
             if (message.message_parts && message.message_parts.length > 0) {
-                console.log('[Freshchat] Message parts:', JSON.stringify(message.message_parts, null, 2));
+                console.log(`[Freshchat] Message parts:`, JSON.stringify(message.message_parts, null, 2));
                 for (const part of message.message_parts) {
                     if (part.text?.content) {
-                        console.log('[Freshchat] Text content:', part.text.content);
+                        console.log(`[Freshchat] Text content:`, part.text.content);
                         messageText = messageText
                             ? `${messageText}\n${part.text.content}`
                             : part.text.content;
@@ -2912,7 +3190,7 @@ app.post('/freshchat/webhook', async (req, res) => {
 
             // Always hydrate attachment details to obtain signed URLs
             if (attachmentParts.length > 0) {
-                console.log('[Freshchat] Fetching message details for attachment hydration...');
+                console.log(`[Freshchat] Fetching message details for attachment hydration...`);
                 const detailedMessage = await freshchatClient.getMessageWithRetry(
                     [freshchatConversationId, conversationGuid],
                     message.id,
@@ -3013,7 +3291,7 @@ app.post('/freshchat/webhook', async (req, res) => {
 
             if (attachmentParts.length > 0) {
                 if (!PUBLIC_URL) {
-                    console.error('[Teams] PUBLIC_URL is not set. Cannot process attachments from Freshchat.');
+                    console.error(`[Teams] PUBLIC_URL is not set. Cannot process attachments from Freshchat.`);
                     messageText += `\n\n⚠️ 첨부파일을 처리할 수 없습니다: 서버 구성 오류.`;
                 } else {
                     for (const attachment of attachmentParts) {
@@ -3118,7 +3396,7 @@ app.post('/freshchat/webhook', async (req, res) => {
             }
 
             if (!messageText && attachmentLinks.length === 0 && fileCards.length === 0) {
-                console.log('[Freshchat] No content found in message');
+                console.log(`[Freshchat] No content found in message`);
                 return res.sendStatus(200);
             }
 
@@ -3230,11 +3508,11 @@ app.post('/freshchat/webhook', async (req, res) => {
                     }],
                     actor_type: 'system'
                 }).catch(notifyError => {
-                    console.error('[Freshchat] Failed to send error notification:', notifyError.message);
+                    console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
                 });
             }
         } catch (notificationError) {
-            console.error('[Freshchat] Error while sending failure notification:', notificationError.message);
+            console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
         }
 
         res.sendStatus(500);
@@ -3244,30 +3522,33 @@ app.post('/freshchat/webhook', async (req, res) => {
 /**
  * Debug endpoint - view current mappings
  */
-app.get('/debug/mappings', (req, res) => {
-    const mappings = [];
-    conversationMap.forEach((value, key) => {
-        mappings.push({
-            teamsConversationId: key,
-            freshchatConversationId: value.freshchatConversationNumericId,
-            freshchatConversationGuid: value.freshchatConversationGuid,
-            freshchatUserId: value.freshchatUserId
+app.get('/debug/mappings', async (req, res) => {
+    try {
+        const mappings = await conversationStore.list(100);
+        res.json({
+            totalMappings: mappings.length,
+            source: redisClient ? 'redis' : 'memory',
+            mappings: mappings.map((entry) => ({
+                teamsConversationId: entry.teamsConversationId,
+                freshchatConversationId: entry.mapping.freshchatConversationNumericId,
+                freshchatConversationGuid: entry.mapping.freshchatConversationGuid,
+                freshchatUserId: entry.mapping.freshchatUserId
+            }))
         });
-    });
-
-    res.json({
-        totalMappings: mappings.length,
-        mappings: mappings
-    });
+    } catch (error) {
+        console.error('[Debug] Failed to list mappings:', error.message);
+        res.status(500).json({
+            error: 'Failed to list mappings'
+        });
+    }
 });
 
 /**
  * Reset mappings endpoint (for testing)
  */
-app.post('/debug/reset', (req, res) => {
-    conversationMap.clear();
-    reverseMap.clear();
-    console.log('[Debug] All mappings cleared');
+app.post('/debug/reset', async (req, res) => {
+    await conversationStore.clearAll();
+    console.log('[Debug] All mappings cleared (memory and Redis)');
     res.json({ message: 'All mappings cleared' });
 });
 
@@ -3317,12 +3598,15 @@ const gracefulShutdown = (signal) => {
     console.log('');
     console.log(`⏰ Timestamp: ${timestamp}`);
     console.log(`📡 Signal: ${signal}`);
-    console.log(`💾 Active conversation mappings: ${conversationMap.size}`);
+    console.log(`💾 Local cache conversation mappings: ${conversationStore.localSize}`);
     console.log('');
     
-    if (conversationMap.size > 0) {
+    const snapshot = conversationStore.getLocalSnapshot(20);
+    if (snapshot.length > 0) {
         console.log('📋 Active Conversations:');
-        for (const [teamsId, mapping] of conversationMap) {
+        for (const entry of snapshot) {
+            const teamsId = entry.teamsConversationId;
+            const mapping = entry.mapping;
             console.log(`   • Teams: ${teamsId.substring(0, 20)}... ↔ Freshchat: ${mapping.freshchatConversationNumericId || mapping.freshchatConversationGuid}`);
         }
         console.log('');

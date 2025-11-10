@@ -12,7 +12,7 @@ A production-ready bidirectional message bridge between Microsoft Teams and Fres
 
 ✅ Side-loaded Teams bot with Bot Framework integration
 ✅ Bidirectional message flow (Teams ↔ Freshchat)
-✅ In-memory conversation mapping
+✅ Redis-backed conversation mapping (with in-memory fallback)
 ✅ Ngrok tunnel support for local development
 ✅ Console logging for demo observability
 ✅ Health check and debug endpoints
@@ -20,7 +20,7 @@ A production-ready bidirectional message bridge between Microsoft Teams and Fres
 ## Limitations (By Design)
 
 ❌ Text messages only (no attachments)
-❌ In-memory storage (restarting clears all mappings)
+❌ Without Redis configured, in-memory storage means restarts clear mappings
 ❌ No message queuing or retry logic
 ❌ No production-grade security or monitoring
 ❌ Single-instance only (no clustering)
@@ -127,6 +127,8 @@ npm install
 
    LOG_LEVEL=info
    ```
+
+> 💡 **Recommended:** Set `REDIS_URL` (and optional `REDIS_PREFIX`) in `.env` so conversation mappings persist across Fly.io restarts and multi-instance deployments. When left blank, the bridge falls back to local in-memory storage only.
 
 ### Step 5: Start ngrok
 

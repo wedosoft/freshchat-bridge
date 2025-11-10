@@ -9,6 +9,7 @@ on:
       - 'docs/**'
       - '**.md'
       - '.github/**'
+  workflow_dispatch:
 
 jobs:
   deploy:
