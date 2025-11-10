@@ -3014,10 +3014,16 @@ app.post('/freshchat/webhook', async (req, res) => {
                             }],
                             actor_type: 'system'
                         }).catch(notifyError => {
-                            console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
+                            // 404는 대화가 없는 것이므로 무시 (다른 채널에서 시작된 대화)
+                            if (notifyError.response?.status !== 404) {
+                                console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
+                            }
                         });
                     } catch (notificationError) {
-                        console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
+                        // 404는 대화가 없는 것이므로 무시
+                        if (notificationError.response?.status !== 404) {
+                            console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
+                        }
                     }
                 }
 
@@ -3508,10 +3514,17 @@ app.post('/freshchat/webhook', async (req, res) => {
                     }],
                     actor_type: 'system'
                 }).catch(notifyError => {
-                    console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
+                    // 404는 대화가 없는 것이므로 무시 (다른 채널에서 시작된 대화)
+                    if (notifyError.response?.status !== 404) {
+                        console.error(`[Freshchat] Failed to send error notification:`, notifyError.message);
+                    }
                 });
             }
         } catch (notificationError) {
+            // 404는 대화가 없는 것이므로 무시
+            if (notificationError.response?.status !== 404) {
+                console.error(`[Freshchat] Error sending delivery failure notification:`, notificationError.message);
+            }
             console.error(`[Freshchat] Error while sending failure notification:`, notificationError.message);
         }
 
