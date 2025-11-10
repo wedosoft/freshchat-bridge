@@ -802,7 +802,7 @@ class FreshsalesClient {
                 // If phone number duplication error, retry without phone numbers
                 if (firstError.response?.status === 400 && 
                     firstError.response?.data?.errors?.message?.includes('이미 존재합니다')) {
-                    console.log(`[Freshsales] Phone number conflict detected, retrying without phone numbers');
+                    console.log(`[Freshsales] Phone number conflict detected, retrying without phone numbers`);
                     
                     // Remove phone numbers and retry
                     delete contact.mobile_number;
@@ -816,7 +816,7 @@ class FreshsalesClient {
                     };
                     
                     const retryResponse = await this.axiosInstance.post('/contacts/upsert', retryPayload);
-                    console.log(`[Freshsales] Upsert successful (without phone):`, JSON.stringify(retryResponse.data, null, 2));
+                    console.log('[Freshsales] Upsert successful (without phone):', JSON.stringify(retryResponse.data, null, 2));
                     return retryResponse.data;
                 } else {
                     throw firstError;
