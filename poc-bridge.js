@@ -2720,8 +2720,9 @@ app.post('/freshchat/webhook', async (req, res) => {
                 // Notify agent about delivery failure (only for agent messages)
                 if (actorType === 'agent') {
                     try {
-                        console.log(`[Freshchat] Sending delivery failure notification to conversation: ${freshchatConversationId}`);
-                        await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                        const notifyConversationId = conversationGuid || freshchatConversationId;
+                        console.log(`[Freshchat] Sending delivery failure notification to conversation: ${notifyConversationId}`);
+                        await freshchatClient.axiosInstance.post(`/conversations/${notifyConversationId}/messages`, {
                             message_parts: [{
                                 text: {
                                     content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 매핑 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
@@ -2752,8 +2753,9 @@ app.post('/freshchat/webhook', async (req, res) => {
                 // Notify agent about missing conversation reference (only for agent messages)
                 if (actorType === 'agent') {
                     try {
-                        console.log(`[Freshchat] Sending missing reference notification to conversation: ${freshchatConversationId}`);
-                        await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                        const notifyConversationId = conversationGuid || freshchatConversationId;
+                        console.log(`[Freshchat] Sending missing reference notification to conversation: ${notifyConversationId}`);
+                        await freshchatClient.axiosInstance.post(`/conversations/${notifyConversationId}/messages`, {
                             message_parts: [{
                                 text: {
                                     content: `⚠️ **Teams 메시지 전송 실패**\n\n서버가 재시작되어 대화 연결 정보가 손실되었습니다.\n\n**해결 방법**: 사용자가 Teams에서 새로운 메시지를 보내면 대화가 복구됩니다.`
@@ -3200,6 +3202,7 @@ app.post('/freshchat/webhook', async (req, res) => {
         try {
             const { data } = req.body;
             const message = data?.message;
+            const conversationGuid = data?.conversation_id || message?.conversation_id || null;
             const freshchatConversationId = message?.freshchat_conversation_id
                 ? String(message.freshchat_conversation_id)
                 : data?.freshchat_conversation_id
@@ -3209,10 +3212,11 @@ app.post('/freshchat/webhook', async (req, res) => {
             if (freshchatConversationId) {
                 const errorMessage = error.message || 'Unknown error';
                 const errorStatus = error.response?.status || 'N/A';
+                const notifyConversationId = conversationGuid || freshchatConversationId;
 
-                console.log(`[Freshchat] Sending delivery failure notification to conversation: ${freshchatConversationId}`);
+                console.log(`[Freshchat] Sending delivery failure notification to conversation: ${notifyConversationId}`);
 
-                await freshchatClient.axiosInstance.post(`/conversations/${freshchatConversationId}/messages`, {
+                await freshchatClient.axiosInstance.post(`/conversations/${notifyConversationId}/messages`, {
                     message_parts: [{
                         text: {
                             content: `⚠️ **Teams 메시지 전송 실패**\n\n사용자에게 메시지를 전달하지 못했습니다.\n\n**오류**: ${errorMessage}\n**상태 코드**: ${errorStatus}\n\n사용자가 Teams에서 새로운 메시지를 보내면 다시 시도됩니다.`
