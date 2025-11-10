@@ -2676,9 +2676,15 @@ app.post('/freshchat/webhook', async (req, res) => {
                 console.log(`[Freshchat] No Teams mapping found in memory for conversation: ${freshchatConversationId}`);
                 console.log(`[Freshchat] Attempting to restore Teams data from conversation properties...`);
 
-                // Try to get Teams data from conversation properties (most reliable)
-                const conversationIdToQuery = conversationGuid || freshchatConversationId;
-                const teamsData = await freshchatClient.getConversationTeamsData(conversationIdToQuery);
+                // Try to get Teams data from conversation properties
+                // First try numeric ID (Freshchat API only accepts numeric IDs for GET /conversations/{id})
+                let teamsData = await freshchatClient.getConversationTeamsData(freshchatConversationId);
+
+                // If GUID is different from numeric ID and first attempt failed, try GUID as fallback
+                if (!teamsData && conversationGuid && conversationGuid !== freshchatConversationId) {
+                    console.log(`[Freshchat] Retrying with GUID: ${conversationGuid}`);
+                    teamsData = await freshchatClient.getConversationTeamsData(conversationGuid);
+                }
 
                 if (teamsData) {
                     teamsConvId = teamsData.teamsConvId;
