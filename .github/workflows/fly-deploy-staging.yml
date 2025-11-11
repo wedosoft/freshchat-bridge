@@ -8,7 +8,6 @@ on:
       - 'teams-app/**'
       - 'docs/**'
       - '**.md'
-      - '.github/**'
   workflow_dispatch:
 
 jobs:
