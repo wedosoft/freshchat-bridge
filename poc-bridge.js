@@ -1455,6 +1455,33 @@ class FreshchatClient {
     }
 
     /**
+     * Get all conversation IDs for a user
+     * @param {string} userId - Freshchat user ID
+     * @returns {Promise<Array<string>>} - Array of conversation IDs
+     */
+    async getUserConversations(userId) {
+        if (!userId) {
+            return [];
+        }
+
+        try {
+            const response = await this.axiosInstance.get(`/users/${userId}/conversations`);
+            const conversations = response.data?.conversations || [];
+            const conversationIds = conversations.map(c => c.id).filter(Boolean);
+
+            console.log(`[Freshchat] Found ${conversationIds.length} conversation(s) for user ${userId}`);
+            return conversationIds;
+        } catch (error) {
+            if (error.response?.status === 404) {
+                console.warn(`[Freshchat] User ${userId} not found or has no conversations`);
+            } else {
+                console.error(`[Freshchat] Failed to get user conversations:`, error.response?.data || error.message);
+            }
+            return [];
+        }
+    }
+
+    /**
      * Upload a file to Freshchat
      */
     async uploadFile(fileBuffer, filename, contentType) {
@@ -1659,6 +1686,44 @@ class FreshchatClient {
                     data: error.response.data
                 });
             }
+
+            // Handle "not the latest conversation" error - Freshchat creates new conversation when resolved
+            const errorMessage = error.response?.data?.message || '';
+            if (error.response?.status === 400 && errorMessage.includes('not the latest conversation')) {
+                console.log(`[Freshchat] Detected stale conversation ID, fetching latest conversation for user ${userId}`);
+
+                try {
+                    // Get all conversations for this user
+                    const userConversations = await this.getUserConversations(userId);
+
+                    if (userConversations.length > 0) {
+                        // Try the first conversation (assuming it's most recent)
+                        const latestConversationId = userConversations[0];
+                        console.log(`[Freshchat] 🔍 Testing conversation order - Total: ${userConversations.length}`);
+                        console.log(`[Freshchat] 🔍 All IDs:`, userConversations);
+                        console.log(`[Freshchat] 🔍 Attempting first ID (index 0): ${latestConversationId}`);
+
+                        // Retry with the latest conversation
+                        const retryResponse = await this.axiosInstance.post(`/conversations/${latestConversationId}/messages`, {
+                            message_parts: messageParts,
+                            actor_type: 'user',
+                            actor_id: userId
+                        });
+
+                        console.log(`[Freshchat] Message sent successfully to latest conversation: ${latestConversationId}`);
+
+                        // Return both the response and the new conversation ID
+                        return {
+                            ...retryResponse.data,
+                            _updatedConversationId: latestConversationId  // Signal to caller that conversation changed
+                        };
+                    }
+                } catch (retryError) {
+                    console.error(`[Freshchat] Retry with latest conversation failed:`, retryError.response?.data || retryError.message);
+                    // Fall through to throw original error
+                }
+            }
+
             throw error;
         }
     }
@@ -2213,35 +2278,25 @@ async function handleTeamsMessage(context) {
         const userMapping = await conversationStore.findByUserId(teamsUserId);
         if (userMapping) {
             console.log(`[Mapping] Found existing conversation via user ID fallback`);
+            console.log(`[Mapping] Consolidating: ${teamsConvId} → ${userMapping.teamsConvId}`);
 
-            // Check if the conversation is still active (not resolved)
-            const conversationId = userMapping.mapping.freshchatConversationGuid
-                || userMapping.mapping.freshchatConversationNumericId;
+            // Use the existing mapping and update conversation reference
+            mapping = userMapping.mapping;
 
-            const isActive = await freshchatClient.isConversationActive(conversationId);
+            // Also store this new conversation ID pointing to same Freshchat conversation
+            // Copy all metadata from existing mapping to preserve state (e.g., greetingSent)
+            await conversationStore.update(teamsConvId, {
+                freshchatConversationGuid: mapping.freshchatConversationGuid,
+                freshchatConversationNumericId: mapping.freshchatConversationNumericId,
+                freshchatUserId: mapping.freshchatUserId,
+                teamsUserId: teamsUserId,
+                conversationReference: TurnContext.getConversationReference(activity),
+                greetingSent: mapping.greetingSent  // Preserve greeting state
+            });
 
-            if (isActive) {
-                console.log(`[Mapping] Conversation is active, consolidating: ${teamsConvId} → ${userMapping.teamsConvId}`);
-
-                // Use the existing mapping and update conversation reference
-                mapping = userMapping.mapping;
-
-                // Also store this new conversation ID pointing to same Freshchat conversation
-                // Copy all metadata from existing mapping to preserve state (e.g., greetingSent)
-                await conversationStore.update(teamsConvId, {
-                    freshchatConversationGuid: mapping.freshchatConversationGuid,
-                    freshchatConversationNumericId: mapping.freshchatConversationNumericId,
-                    freshchatUserId: mapping.freshchatUserId,
-                    teamsUserId: teamsUserId,
-                    conversationReference: TurnContext.getConversationReference(activity),
-                    greetingSent: mapping.greetingSent  // Preserve greeting state
-                });
-
-                console.log(`[Mapping] New Teams conversation ID linked to existing Freshchat conversation`);
-            } else {
-                console.log(`[Mapping] Conversation is resolved, will create new conversation instead`);
-                // mapping remains null, will create new conversation below
-            }
+            console.log(`[Mapping] New Teams conversation ID linked to existing Freshchat conversation`);
+            // Note: If conversation was resolved, Freshchat will auto-create new one and return error
+            // The sendMessage retry logic will handle this automatically
         }
     }
 
@@ -2600,18 +2655,25 @@ async function handleTeamsMessage(context) {
 
             let sendSucceeded = false;
             let lastError = null;
+            let updatedConversationId = null;
 
             for (let index = 0; index < candidateConversations.length; index += 1) {
                 const candidate = candidateConversations[index];
 
                 try {
-                    await freshchatClient.sendMessage(
+                    const result = await freshchatClient.sendMessage(
                         candidate.id,
                         mapping.freshchatUserId,
                         hasTextContent ? messageText : '',
                         freshchatAttachments,
                         { hydrationConversationIds }
                     );
+
+                    // Check if conversation ID was updated (resolved -> new conversation)
+                    if (result._updatedConversationId) {
+                        updatedConversationId = result._updatedConversationId;
+                        console.log(`[Freshchat] Conversation auto-updated to: ${updatedConversationId}`);
+                    }
 
                     if (index > 0) {
                         console.log(`[Freshchat] Message sent using fallback conversation identifier (${candidate.label}): ${candidate.id}`);
@@ -2634,6 +2696,18 @@ async function handleTeamsMessage(context) {
 
             if (!sendSucceeded) {
                 throw lastError || new Error('Failed to send message to Freshchat');
+            }
+
+            // Update mapping if conversation ID changed (resolved -> new conversation)
+            if (updatedConversationId) {
+                console.log(`[Mapping] Updating conversation ID from ${guidConversationId || numericConversationId} to ${updatedConversationId}`);
+
+                await conversationStore.update(teamsConvId, {
+                    freshchatConversationGuid: updatedConversationId,
+                    freshchatConversationNumericId: updatedConversationId
+                });
+
+                console.log(`[Mapping] Conversation ID updated successfully`);
             }
         }
 
