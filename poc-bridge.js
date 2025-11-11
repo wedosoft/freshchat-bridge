@@ -436,12 +436,23 @@ function buildFreshchatMessageParts(message, attachments = []) {
             continue;
         }
 
-        if (attachment.url) {
+        const contentType = attachment.contentType || attachment.content_type;
+        const fileHash = attachment.fileHash || attachment.file_hash || attachment.hash;
+        const fileId = attachment.fileId || attachment.file_id;
+        const sizeCandidate = attachment.file_size_in_bytes ?? attachment.fileSize;
+        const numericSize = Number(sizeCandidate);
+        const validSize = Number.isFinite(numericSize) && numericSize > 0 ? numericSize : undefined;
+        const safeName = attachment.name || attachment.file_name || 'attachment';
+
+        // Check if this is an image by contentType
+        const isImage = contentType && contentType.toLowerCase().startsWith('image/');
+
+        // For URL-based attachments (legacy support, should be rare now)
+        if (attachment.url && !fileHash && !fileId) {
             const imagePayload = {
                 url: attachment.url
             };
 
-            const contentType = attachment.contentType || attachment.content_type;
             if (contentType) {
                 imagePayload.contentType = contentType;
                 imagePayload.content_type = contentType;
@@ -450,46 +461,48 @@ function buildFreshchatMessageParts(message, attachments = []) {
             messageParts.push({
                 image: imagePayload
             });
+            continue;
+        }
+
+        // For file_hash/file_id based attachments (preferred method)
+        if (!fileHash && !fileId) {
+            console.warn(`[Freshchat] Skipping attachment without file identifier`, {
+                name: attachment.name,
+                keys: Object.keys(attachment)
+            });
+            continue;
+        }
+
+        const filePayload = {
+            name: safeName
+        };
+
+        if (validSize) {
+            filePayload.file_size_in_bytes = validSize;
+        }
+
+        if (contentType) {
+            filePayload.contentType = contentType;
+            filePayload.content_type = contentType;
+        }
+
+        if (fileHash) {
+            filePayload.fileHash = fileHash;
+            filePayload.file_hash = fileHash;
+        }
+
+        if (fileId) {
+            filePayload.fileId = fileId;
+            filePayload.file_id = fileId;
+        }
+
+        // Use 'image' type for images, 'file' for everything else
+        // Both use file_hash/file_id, but the API expects different message part types
+        if (isImage) {
+            messageParts.push({
+                image: filePayload
+            });
         } else {
-            const contentType = attachment.contentType || attachment.content_type;
-            const fileHash = attachment.fileHash || attachment.file_hash || attachment.hash;
-            const fileId = attachment.fileId || attachment.file_id;
-            const sizeCandidate = attachment.file_size_in_bytes ?? attachment.fileSize;
-            const numericSize = Number(sizeCandidate);
-            const validSize = Number.isFinite(numericSize) && numericSize > 0 ? numericSize : undefined;
-            const safeName = attachment.name || attachment.file_name || 'attachment';
-
-            if (!fileHash && !fileId) {
-                console.warn(`[Freshchat] Skipping attachment without file identifier`, {
-                    name: attachment.name,
-                    keys: Object.keys(attachment)
-                });
-                continue;
-            }
-
-            const filePayload = {
-                name: safeName
-            };
-
-            if (validSize) {
-                filePayload.file_size_in_bytes = validSize;
-            }
-
-            if (contentType) {
-                filePayload.contentType = contentType;
-                filePayload.content_type = contentType;
-            }
-
-            if (fileHash) {
-                filePayload.fileHash = fileHash;
-                filePayload.file_hash = fileHash;
-            }
-
-            if (fileId) {
-                filePayload.fileId = fileId;
-                filePayload.file_id = fileId;
-            }
-
             messageParts.push({
                 file: filePayload
             });
@@ -2175,20 +2188,66 @@ async function handleTeamsMessage(context) {
                     const effectiveName = sanitizedName || storedFilename;
 
                     if (isImage) {
-                        // For images, save locally and create a public URL
-                        if (!PUBLIC_URL) {
-                            throw new Error('PUBLIC_URL environment variable is not set. Cannot serve images.');
-                        }
-                        fs.writeFileSync(storagePath, downloadResult.buffer);
+                        // For images, upload to Freshchat directly using file upload API
+                        // This is more reliable than serving via URL, especially for images from third-party capture tools
+                        const uploadedFile = await freshchatClient.uploadFile(
+                            downloadResult.buffer,
+                            effectiveName,
+                            resolvedContentType
+                        );
 
-                        const publicUrl = `${PUBLIC_URL.replace(/\/$/, '')}/files/${storedFilename}`;
-                        freshchatAttachments.push({
-                            url: publicUrl,
+                        const fallbackSize = downloadResult.contentLength || downloadResult.buffer.length;
+                        const normalizedUpload = normalizeFreshchatUploadResponse(uploadedFile, {
+                            name: effectiveName,
                             contentType: resolvedContentType,
-                            content_type: resolvedContentType,
-                            name: effectiveName
+                            fileSize: fallbackSize
                         });
-                        console.log(`[Teams → Freshchat] Image served at: ${publicUrl}`);
+
+                        console.log('[Teams → Freshchat] Image upload response (normalized):', {
+                            name: normalizedUpload.name,
+                            size: normalizedUpload.fileSize,
+                            contentType: normalizedUpload.contentType,
+                            fileHash: normalizedUpload.fileHash,
+                            fileId: normalizedUpload.fileId,
+                            downloadUrl: normalizedUpload.downloadUrl
+                        });
+
+                        // Build image attachment payload with file_hash/file_id
+                        const imageAttachmentPayload = {
+                            name: normalizedUpload.name,
+                            contentType: normalizedUpload.contentType,
+                            content_type: normalizedUpload.contentType
+                        };
+
+                        if (normalizedUpload.fileHash) {
+                            imageAttachmentPayload.fileHash = normalizedUpload.fileHash;
+                            imageAttachmentPayload.file_hash = normalizedUpload.fileHash;
+                        }
+
+                        if (normalizedUpload.fileId) {
+                            imageAttachmentPayload.fileId = normalizedUpload.fileId;
+                            imageAttachmentPayload.file_id = normalizedUpload.fileId;
+                        }
+
+                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId) {
+                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash and fileId. Freshchat may skip the attachment.');
+                        }
+
+                        // Optionally save locally for backup/debugging
+                        try {
+                            fs.writeFileSync(storagePath, downloadResult.buffer);
+                            console.log(`[Teams → Freshchat] Image also saved locally: ${storagePath}`);
+                        } catch (saveError) {
+                            console.warn(`[Teams → Freshchat] Failed to save image locally:`, saveError.message);
+                        }
+
+                        freshchatAttachments.push(imageAttachmentPayload);
+                        console.log('[Teams → Freshchat] Image prepared for send:', {
+                            name: imageAttachmentPayload.name,
+                            fileHash: imageAttachmentPayload.fileHash,
+                            fileId: imageAttachmentPayload.fileId,
+                            contentType: imageAttachmentPayload.contentType
+                        });
 
                     } else {
                         // For other files, upload to Freshchat and use file_hash
