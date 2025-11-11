@@ -2413,8 +2413,13 @@ async function handleTeamsMessage(context) {
                             imageAttachmentPayload.file_id = normalizedUpload.fileId;
                         }
 
-                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId) {
-                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash and fileId. Freshchat may skip the attachment.');
+                        // Add download URL for images (required to avoid IMAGE_EMPTY_CONTENT)
+                        if (normalizedUpload.downloadUrl) {
+                            imageAttachmentPayload.url = normalizedUpload.downloadUrl;
+                        }
+
+                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId && !imageAttachmentPayload.url) {
+                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash, fileId, and URL. Freshchat may skip the attachment.');
                         }
 
                         freshchatAttachments.push(imageAttachmentPayload);
@@ -2422,6 +2427,7 @@ async function handleTeamsMessage(context) {
                             name: imageAttachmentPayload.name,
                             fileHash: imageAttachmentPayload.fileHash,
                             fileId: imageAttachmentPayload.fileId,
+                            url: imageAttachmentPayload.url,
                             contentType: imageAttachmentPayload.contentType
                         });
 
