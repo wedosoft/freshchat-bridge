@@ -527,9 +527,6 @@ function buildFreshchatMessageParts(message, attachments = []) {
         const validSize = Number.isFinite(numericSize) && numericSize > 0 ? numericSize : undefined;
         const safeName = attachment.name || attachment.file_name || 'attachment';
 
-        // Check if this is an image by contentType
-        const isImage = contentType && contentType.toLowerCase().startsWith('image/');
-
         // For URL-based attachments (legacy support, should be rare now)
         if (attachment.url && !fileHash && !fileId) {
             const imagePayload = {
@@ -579,17 +576,12 @@ function buildFreshchatMessageParts(message, attachments = []) {
             filePayload.file_id = fileId;
         }
 
-        // Use 'image' type for images, 'file' for everything else
-        // Both use file_hash/file_id, but the API expects different message part types
-        if (isImage) {
-            messageParts.push({
-                image: filePayload
-            });
-        } else {
-            messageParts.push({
-                file: filePayload
-            });
-        }
+        // Use 'file' type for all attachments including images when using file_hash/file_id
+        // The 'image' type with file_hash requires a 'url' field which upload API doesn't provide
+        // Using 'file' type works for both images and documents with just file_hash
+        messageParts.push({
+            file: filePayload
+        });
     }
 
     return messageParts;
@@ -2413,13 +2405,8 @@ async function handleTeamsMessage(context) {
                             imageAttachmentPayload.file_id = normalizedUpload.fileId;
                         }
 
-                        // Add download URL for images (required to avoid IMAGE_EMPTY_CONTENT)
-                        if (normalizedUpload.downloadUrl) {
-                            imageAttachmentPayload.url = normalizedUpload.downloadUrl;
-                        }
-
-                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId && !imageAttachmentPayload.url) {
-                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash, fileId, and URL. Freshchat may skip the attachment.');
+                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId) {
+                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash and fileId. Freshchat may skip the attachment.');
                         }
 
                         freshchatAttachments.push(imageAttachmentPayload);
@@ -2427,7 +2414,6 @@ async function handleTeamsMessage(context) {
                             name: imageAttachmentPayload.name,
                             fileHash: imageAttachmentPayload.fileHash,
                             fileId: imageAttachmentPayload.fileId,
-                            url: imageAttachmentPayload.url,
                             contentType: imageAttachmentPayload.contentType
                         });
 
