@@ -240,6 +240,10 @@ class ConversationStore {
     async count() {
         if (this.redis) {
             try {
+                // Check if Redis is ready before attempting operation
+                if (this.redis.status !== 'ready') {
+                    return this.memory.size;
+                }
                 return await this.redis.scard(this.indexKey);
             } catch (error) {
                 console.warn(`[ConversationStore] Failed to count Redis mappings:`, error.message);
@@ -252,6 +256,16 @@ class ConversationStore {
     async list(limit = 50) {
         if (this.redis) {
             try {
+                // Check if Redis is ready before attempting operation
+                if (this.redis.status !== 'ready') {
+                    return Array.from(this.memory.entries())
+                        .slice(0, limit)
+                        .map(([teamsConversationId, mapping]) => ({
+                            teamsConversationId,
+                            mapping
+                        }));
+                }
+
                 const ids = await this.redis.smembers(this.indexKey);
                 const limitedIds = ids.slice(0, limit);
                 const results = [];
