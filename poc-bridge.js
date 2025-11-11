@@ -1483,7 +1483,7 @@ class FreshchatClient {
                 maxBodyLength: Infinity
             });
 
-            console.log(`[Freshchat] File uploaded successfully:`, response.data);
+            console.log(`[Freshchat] File uploaded successfully:`, JSON.stringify(response.data, null, 2));
             return response.data;
         } catch (error) {
             console.error(`[Freshchat] Error uploading file:`, error.response?.data || error.message);
