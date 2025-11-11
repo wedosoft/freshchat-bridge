@@ -1468,32 +1468,6 @@ class FreshchatClient {
         }
     }
 
-    /**
-     * Get all conversation IDs for a user
-     * @param {string} userId - Freshchat user ID
-     * @returns {Promise<Array<string>>} - Array of conversation IDs
-     */
-    async getUserConversations(userId) {
-        if (!userId) {
-            return [];
-        }
-
-        try {
-            const response = await this.axiosInstance.get(`/users/${userId}/conversations`);
-            const conversations = response.data?.conversations || [];
-            const conversationIds = conversations.map(c => c.id).filter(Boolean);
-
-            console.log(`[Freshchat] Found ${conversationIds.length} conversation(s) for user ${userId}`);
-            return conversationIds;
-        } catch (error) {
-            if (error.response?.status === 404) {
-                console.warn(`[Freshchat] User ${userId} not found or has no conversations`);
-            } else {
-                console.error(`[Freshchat] Failed to get user conversations:`, error.response?.data || error.message);
-            }
-            return [];
-        }
-    }
 
     /**
      * Upload a file to Freshchat
@@ -1701,42 +1675,42 @@ class FreshchatClient {
                 });
             }
 
-            // Handle "not the latest conversation" error - Freshchat creates new conversation when resolved
+            // Handle "not the latest conversation" error - create new conversation
             const errorMessage = error.response?.data?.message || '';
             if (error.response?.status === 400 && errorMessage.includes('not the latest conversation')) {
-                console.log(`[Freshchat] Detected stale conversation ID, fetching latest conversation for user ${userId}`);
+                console.log(`[Freshchat] Detected resolved conversation, creating new conversation for user ${userId}`);
 
                 try {
-                    // Get all conversations for this user
-                    const userConversations = await this.getUserConversations(userId);
+                    // Create new conversation with the message
+                    const messageParts = buildFreshchatMessageParts(message, attachments);
 
-                    if (userConversations.length > 0) {
-                        // Try the first conversation (assuming it's most recent)
-                        const latestConversationId = userConversations[0];
-                        console.log(`[Freshchat] 🔍 Testing conversation order - Total: ${userConversations.length}`);
-                        console.log(`[Freshchat] 🔍 All IDs:`, userConversations);
-                        console.log(`[Freshchat] 🔍 Attempting first ID (index 0): ${latestConversationId}`);
+                    const newConvResponse = await this.axiosInstance.post('/conversations', {
+                        channel_id: this.inboxId,
+                        messages: [
+                            {
+                                message_parts: messageParts,
+                                actor_type: 'user',
+                                actor_id: userId
+                            }
+                        ],
+                        users: [
+                            {
+                                id: userId
+                            }
+                        ]
+                    });
 
-                        // Rebuild message parts for retry
-                        const retryMessageParts = buildFreshchatMessageParts(message, attachments);
+                    const newConversationId = newConvResponse.data.conversation_id;
+                    console.log(`[Freshchat] ✅ New conversation created: ${newConversationId}`);
 
-                        // Retry with the latest conversation
-                        const retryResponse = await this.axiosInstance.post(`/conversations/${latestConversationId}/messages`, {
-                            message_parts: retryMessageParts,
-                            actor_type: 'user',
-                            actor_id: userId
-                        });
-
-                        console.log(`[Freshchat] Message sent successfully to latest conversation: ${latestConversationId}`);
-
-                        // Return both the response and the new conversation ID
-                        return {
-                            ...retryResponse.data,
-                            _updatedConversationId: latestConversationId  // Signal to caller that conversation changed
-                        };
-                    }
-                } catch (retryError) {
-                    console.error(`[Freshchat] Retry with latest conversation failed:`, retryError.response?.data || retryError.message);
+                    // Return the response with new conversation ID
+                    return {
+                        id: newConvResponse.data.messages?.[0]?.id,
+                        created_time: newConvResponse.data.messages?.[0]?.created_time,
+                        _updatedConversationId: newConversationId  // Signal to caller that conversation changed
+                    };
+                } catch (createError) {
+                    console.error(`[Freshchat] Failed to create new conversation:`, createError.response?.data || createError.message);
                     // Fall through to throw original error
                 }
             }
