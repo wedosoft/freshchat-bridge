@@ -1425,6 +1425,36 @@ class FreshchatClient {
     }
 
     /**
+     * Check if conversation is still active (not resolved)
+     * @param {string} conversationId - Freshchat conversation ID (GUID or numeric)
+     * @returns {Promise<boolean>} - true if active, false if resolved or error
+     */
+    async isConversationActive(conversationId) {
+        if (!conversationId) {
+            return false;
+        }
+
+        try {
+            const response = await this.axiosInstance.get(`/conversations/${conversationId}`);
+            const conversation = response.data;
+            const status = conversation?.status;
+
+            console.log(`[Freshchat] Conversation ${conversationId} status: ${status}`);
+
+            // Consider conversation inactive if resolved
+            return status !== 'resolved';
+        } catch (error) {
+            if (error.response?.status === 404) {
+                console.warn(`[Freshchat] Conversation ${conversationId} not found (404)`);
+            } else {
+                console.error(`[Freshchat] Failed to check conversation status:`, error.response?.data || error.message);
+            }
+            // On error, consider inactive to avoid reusing potentially resolved conversations
+            return false;
+        }
+    }
+
+    /**
      * Upload a file to Freshchat
      */
     async uploadFile(fileBuffer, filename, contentType) {
@@ -2183,21 +2213,35 @@ async function handleTeamsMessage(context) {
         const userMapping = await conversationStore.findByUserId(teamsUserId);
         if (userMapping) {
             console.log(`[Mapping] Found existing conversation via user ID fallback`);
-            console.log(`[Mapping] Consolidating: ${teamsConvId} → ${userMapping.teamsConvId}`);
 
-            // Use the existing mapping and update conversation reference
-            mapping = userMapping.mapping;
+            // Check if the conversation is still active (not resolved)
+            const conversationId = userMapping.mapping.freshchatConversationGuid
+                || userMapping.mapping.freshchatConversationNumericId;
 
-            // Also store this new conversation ID pointing to same Freshchat conversation
-            await conversationStore.update(teamsConvId, {
-                freshchatConversationGuid: mapping.freshchatConversationGuid,
-                freshchatConversationNumericId: mapping.freshchatConversationNumericId,
-                freshchatUserId: mapping.freshchatUserId,
-                teamsUserId: teamsUserId,
-                conversationReference: TurnContext.getConversationReference(activity)
-            });
+            const isActive = await freshchatClient.isConversationActive(conversationId);
 
-            console.log(`[Mapping] New Teams conversation ID linked to existing Freshchat conversation`);
+            if (isActive) {
+                console.log(`[Mapping] Conversation is active, consolidating: ${teamsConvId} → ${userMapping.teamsConvId}`);
+
+                // Use the existing mapping and update conversation reference
+                mapping = userMapping.mapping;
+
+                // Also store this new conversation ID pointing to same Freshchat conversation
+                // Copy all metadata from existing mapping to preserve state (e.g., greetingSent)
+                await conversationStore.update(teamsConvId, {
+                    freshchatConversationGuid: mapping.freshchatConversationGuid,
+                    freshchatConversationNumericId: mapping.freshchatConversationNumericId,
+                    freshchatUserId: mapping.freshchatUserId,
+                    teamsUserId: teamsUserId,
+                    conversationReference: TurnContext.getConversationReference(activity),
+                    greetingSent: mapping.greetingSent  // Preserve greeting state
+                });
+
+                console.log(`[Mapping] New Teams conversation ID linked to existing Freshchat conversation`);
+            } else {
+                console.log(`[Mapping] Conversation is resolved, will create new conversation instead`);
+                // mapping remains null, will create new conversation below
+            }
         }
     }
 
@@ -2279,7 +2323,6 @@ async function handleTeamsMessage(context) {
                     console.log(`[Teams] - Final contentType: ${resolvedContentType}`);
                     console.log(`[Teams] - Is image: ${isImage}`);
                     const storedFilename = buildStoredFilename(attachmentName, resolvedContentType);
-                    const storagePath = path.join(UPLOADS_DIR, storedFilename);
                     const effectiveName = sanitizedName || storedFilename;
 
                     if (isImage) {
@@ -2326,14 +2369,6 @@ async function handleTeamsMessage(context) {
 
                         if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId) {
                             console.warn('[Teams → Freshchat] Uploaded image missing fileHash and fileId. Freshchat may skip the attachment.');
-                        }
-
-                        // Optionally save locally for backup/debugging
-                        try {
-                            fs.writeFileSync(storagePath, downloadResult.buffer);
-                            console.log(`[Teams → Freshchat] Image also saved locally: ${storagePath}`);
-                        } catch (saveError) {
-                            console.warn(`[Teams → Freshchat] Failed to save image locally:`, saveError.message);
                         }
 
                         freshchatAttachments.push(imageAttachmentPayload);
