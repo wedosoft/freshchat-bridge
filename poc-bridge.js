@@ -722,8 +722,8 @@ async function storeBufferAsPublicFile(buffer, filename) {
         return null;
     }
 
-    // Size limit: 10MB
-    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    // Size limit: 20MB
+    const MAX_FILE_SIZE = 20 * 1024 * 1024;
     if (buffer.length > MAX_FILE_SIZE) {
         console.warn(`[Files] File ${filename} exceeds size limit (${buffer.length} bytes > ${MAX_FILE_SIZE} bytes)`);
         return null;
