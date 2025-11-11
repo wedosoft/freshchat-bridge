@@ -2724,17 +2724,69 @@ async function handleTeamsMessage(context) {
             let lastError = null;
             let updatedConversationId = null;
 
-            for (let index = 0; index < candidateConversations.length; index += 1) {
-                const candidate = candidateConversations[index];
+            // Check if conversation is resolved before attempting to send
+            const primaryConversationId = candidateConversations[0].id;
+            const isActive = await freshchatClient.isConversationActive(primaryConversationId);
+
+            if (!isActive) {
+                console.log(`[Freshchat] Conversation ${primaryConversationId} is resolved, creating new conversation for user ${mapping.freshchatUserId}`);
 
                 try {
-                    const result = await freshchatClient.sendMessage(
-                        candidate.id,
-                        mapping.freshchatUserId,
+                    // Create new conversation with the message
+                    const messageParts = buildFreshchatMessageParts(
                         hasTextContent ? messageText : '',
-                        freshchatAttachments,
-                        { hydrationConversationIds }
+                        freshchatAttachments
                     );
+
+                    const newConvResponse = await freshchatClient.axiosInstance.post('/conversations', {
+                        channel_id: freshchatClient.inboxId,
+                        messages: [
+                            {
+                                message_parts: messageParts,
+                                actor_type: 'user',
+                                actor_id: mapping.freshchatUserId
+                            }
+                        ],
+                        users: [
+                            {
+                                id: mapping.freshchatUserId
+                            }
+                        ]
+                    });
+
+                    const newConversationId = newConvResponse.data.conversation_id;
+                    console.log(`[Freshchat] ✅ New conversation created: ${newConversationId}`);
+
+                    // Update mapping with new conversation ID
+                    await conversationStore.update(teamsConvId, {
+                        freshchatConversationGuid: newConversationId,
+                        freshchatConversationNumericId: newConversationId
+                    });
+
+                    console.log(`[Mapping] Updated to new conversation ID: ${newConversationId}`);
+
+                    // Mark as successful and skip the retry loop
+                    sendSucceeded = true;
+                    updatedConversationId = newConversationId;
+                } catch (createError) {
+                    console.error(`[Freshchat] Failed to create new conversation:`, createError.response?.data || createError.message);
+                    throw createError;
+                }
+            }
+
+            // Only attempt to send to existing conversation if not already handled
+            if (!sendSucceeded) {
+                for (let index = 0; index < candidateConversations.length; index += 1) {
+                    const candidate = candidateConversations[index];
+
+                    try {
+                        const result = await freshchatClient.sendMessage(
+                            candidate.id,
+                            mapping.freshchatUserId,
+                            hasTextContent ? messageText : '',
+                            freshchatAttachments,
+                            { hydrationConversationIds }
+                        );
 
                     // Check if conversation ID was updated (resolved -> new conversation)
                     if (result._updatedConversationId) {
@@ -2759,6 +2811,7 @@ async function handleTeamsMessage(context) {
 
                     throw error;
                 }
+            }
             }
 
             if (!sendSucceeded) {
