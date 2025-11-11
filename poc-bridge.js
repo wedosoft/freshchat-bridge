@@ -526,9 +526,12 @@ function buildFreshchatMessageParts(message, attachments = []) {
         const numericSize = Number(sizeCandidate);
         const validSize = Number.isFinite(numericSize) && numericSize > 0 ? numericSize : undefined;
         const safeName = attachment.name || attachment.file_name || 'attachment';
+        const hasUrl = attachment.url && typeof attachment.url === 'string' && attachment.url.trim().length > 0;
+        const isImage = contentType && contentType.toLowerCase().startsWith('image/');
 
-        // For URL-based attachments (legacy support, should be rare now)
-        if (attachment.url && !fileHash && !fileId) {
+        // Strategy: Use 'image' type when URL is available (inline preview), otherwise use 'file' type
+        if (hasUrl) {
+            // Image/file with URL - use 'image' type for inline display
             const imagePayload = {
                 url: attachment.url
             };
@@ -538,21 +541,33 @@ function buildFreshchatMessageParts(message, attachments = []) {
                 imagePayload.content_type = contentType;
             }
 
+            // Include fileHash/fileId if available (provides fallback)
+            if (fileHash) {
+                imagePayload.fileHash = fileHash;
+                imagePayload.file_hash = fileHash;
+            }
+
+            if (fileId) {
+                imagePayload.fileId = fileId;
+                imagePayload.file_id = fileId;
+            }
+
             messageParts.push({
                 image: imagePayload
             });
             continue;
         }
 
-        // For file_hash/file_id based attachments (preferred method)
+        // For attachments without URL (fileHash/fileId only)
         if (!fileHash && !fileId) {
-            console.warn(`[Freshchat] Skipping attachment without file identifier`, {
+            console.warn(`[Freshchat] Skipping attachment without file identifier or URL`, {
                 name: attachment.name,
                 keys: Object.keys(attachment)
             });
             continue;
         }
 
+        // Build file payload for attachments without URL
         const filePayload = {
             name: safeName
         };
@@ -576,9 +591,8 @@ function buildFreshchatMessageParts(message, attachments = []) {
             filePayload.file_id = fileId;
         }
 
-        // Use 'file' type for all attachments including images when using file_hash/file_id
-        // The 'image' type with file_hash requires a 'url' field which upload API doesn't provide
-        // Using 'file' type works for both images and documents with just file_hash
+        // Use 'file' type when URL is not available
+        // This displays as downloadable attachment in Freshchat
         messageParts.push({
             file: filePayload
         });
@@ -674,6 +688,65 @@ function buildStoredFilename(preferredName, contentType) {
     }
 
     return `${timestamp}-${sanitized}${extension}`;
+}
+
+/**
+ * Store a file buffer to the public uploads directory and return its URL.
+ * Returns null if PUBLIC_URL is not configured or storage fails.
+ *
+ * Security considerations:
+ * - Filename is already sanitized by buildStoredFilename()
+ * - Files are stored in UPLOADS_DIR with timestamped names
+ * - 10MB size limit to prevent DoS
+ * - Cache-Control headers set on /files route
+ *
+ * @param {Buffer} buffer - File content
+ * @param {string} filename - Sanitized filename (from buildStoredFilename)
+ * @returns {Promise<string|null>} Public URL or null on failure
+ */
+async function storeBufferAsPublicFile(buffer, filename) {
+    // Validate inputs
+    if (!buffer || !Buffer.isBuffer(buffer)) {
+        console.warn('[Files] Invalid buffer provided to storeBufferAsPublicFile');
+        return null;
+    }
+
+    if (!filename || typeof filename !== 'string' || filename.trim().length === 0) {
+        console.warn('[Files] Invalid filename provided to storeBufferAsPublicFile');
+        return null;
+    }
+
+    // Check PUBLIC_URL configuration
+    if (!PUBLIC_URL || PUBLIC_URL.trim().length === 0) {
+        console.warn('[Files] PUBLIC_URL is not configured. Skipping public file storage.');
+        return null;
+    }
+
+    // Size limit: 10MB
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    if (buffer.length > MAX_FILE_SIZE) {
+        console.warn(`[Files] File ${filename} exceeds size limit (${buffer.length} bytes > ${MAX_FILE_SIZE} bytes)`);
+        return null;
+    }
+
+    try {
+        // Normalize filename (remove any path traversal attempts)
+        const safeName = path.basename(filename);
+        const filepath = path.join(UPLOADS_DIR, safeName);
+
+        // Write file atomically
+        await fs.promises.writeFile(filepath, buffer, { mode: 0o644 });
+
+        // Generate public URL
+        const baseUrl = PUBLIC_URL.replace(/\/$/, '');
+        const publicUrl = `${baseUrl}/files/${encodeURIComponent(safeName)}`;
+
+        console.log(`[Files] Stored file successfully: ${safeName} (${buffer.length} bytes) -> ${publicUrl}`);
+        return publicUrl;
+    } catch (error) {
+        console.error(`[Files] Failed to persist ${filename} for public access:`, error.message);
+        return null;
+    }
 }
 
 /**
@@ -2405,8 +2478,19 @@ async function handleTeamsMessage(context) {
                             imageAttachmentPayload.file_id = normalizedUpload.fileId;
                         }
 
-                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId) {
-                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash and fileId. Freshchat may skip the attachment.');
+                        // Store file locally to enable inline image preview
+                        // If PUBLIC_URL is configured, save the file and generate a public URL
+                        // This allows Freshchat to display images inline instead of as downloadable attachments
+                        const publicUrl = await storeBufferAsPublicFile(downloadResult.buffer, storedFilename);
+                        if (publicUrl) {
+                            imageAttachmentPayload.url = publicUrl;
+                            console.log(`[Teams → Freshchat] Image stored with public URL: ${publicUrl}`);
+                        } else {
+                            console.log('[Teams → Freshchat] No public URL available, will use fileHash for attachment');
+                        }
+
+                        if (!imageAttachmentPayload.fileHash && !imageAttachmentPayload.fileId && !imageAttachmentPayload.url) {
+                            console.warn('[Teams → Freshchat] Uploaded image missing fileHash, fileId, and URL. Freshchat may skip the attachment.');
                         }
 
                         freshchatAttachments.push(imageAttachmentPayload);
