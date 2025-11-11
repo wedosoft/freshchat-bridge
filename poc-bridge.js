@@ -322,6 +322,75 @@ class ConversationStore {
     get localSize() {
         return this.memory.size;
     }
+
+    /**
+     * Find conversation mapping by Teams user ID
+     * This is used as a fallback when conversation.id changes (e.g., screenshot messages)
+     */
+    async findByUserId(teamsUserId) {
+        if (!teamsUserId) {
+            return null;
+        }
+
+        // Check in-memory store first
+        for (const [teamsConvId, mapping] of this.memory.entries()) {
+            if (mapping.teamsUserId === teamsUserId) {
+                console.log(`[ConversationStore] Found mapping by user ID (memory): ${teamsUserId} → ${teamsConvId}`);
+                return { teamsConvId, mapping };
+            }
+        }
+
+        // Check Redis if available
+        if (!this.redis) {
+            return null;
+        }
+
+        try {
+            const userKey = `${this.prefix}:user:${teamsUserId}:latest_conversation`;
+            const teamsConvId = await this.redis.get(userKey);
+
+            if (!teamsConvId) {
+                return null;
+            }
+
+            const mapping = await this.get(teamsConvId);
+            if (mapping) {
+                console.log(`[ConversationStore] Found mapping by user ID (Redis): ${teamsUserId} → ${teamsConvId}`);
+                return { teamsConvId, mapping };
+            }
+
+            return null;
+        } catch (error) {
+            console.error(`[ConversationStore] Failed to find by user ID:`, error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Update user's latest conversation reference
+     */
+    async updateUserLatestConversation(teamsUserId, teamsConvId) {
+        if (!teamsUserId || !teamsConvId) {
+            return;
+        }
+
+        // Update in-memory mapping with user ID
+        const mapping = this.memory.get(teamsConvId);
+        if (mapping) {
+            mapping.teamsUserId = teamsUserId;
+            this.memory.set(teamsConvId, mapping);
+        }
+
+        // Update Redis user index
+        if (this.redis) {
+            try {
+                const userKey = `${this.prefix}:user:${teamsUserId}:latest_conversation`;
+                await this.redis.set(userKey, teamsConvId, 'EX', this.ttlSeconds);
+            } catch (error) {
+                console.error(`[ConversationStore] Failed to update user latest conversation:`, error.message);
+            }
+        }
+    }
 }
 
 const conversationStore = new ConversationStore(redisClient, {
@@ -2104,7 +2173,33 @@ async function handleTeamsMessage(context) {
 
     // Check if we already have a Freshchat conversation for this Teams conversation
     const teamsConvId = activity.conversation.id;
+    const teamsUserId = activity.from.id;
     let mapping = await conversationStore.get(teamsConvId);
+
+    // Fallback: if no mapping found by conversation ID, try finding by user ID
+    // This handles cases where Teams changes conversation.id for the same user
+    // (e.g., when sending screenshots after text messages)
+    if (!mapping) {
+        const userMapping = await conversationStore.findByUserId(teamsUserId);
+        if (userMapping) {
+            console.log(`[Mapping] Found existing conversation via user ID fallback`);
+            console.log(`[Mapping] Consolidating: ${teamsConvId} → ${userMapping.teamsConvId}`);
+
+            // Use the existing mapping and update conversation reference
+            mapping = userMapping.mapping;
+
+            // Also store this new conversation ID pointing to same Freshchat conversation
+            await conversationStore.update(teamsConvId, {
+                freshchatConversationGuid: mapping.freshchatConversationGuid,
+                freshchatConversationNumericId: mapping.freshchatConversationNumericId,
+                freshchatUserId: mapping.freshchatUserId,
+                teamsUserId: teamsUserId,
+                conversationReference: TurnContext.getConversationReference(activity)
+            });
+
+            console.log(`[Mapping] New Teams conversation ID linked to existing Freshchat conversation`);
+        }
+    }
 
     try {
         const trimmedMessageText = typeof activity.text === 'string' ? activity.text.trim() : '';
@@ -2375,10 +2470,14 @@ async function handleTeamsMessage(context) {
                 freshchatConversationGuid,
                 freshchatConversationNumericId,
                 freshchatUserId: freshchatConv.user_id,
+                teamsUserId: teamsUserId,
                 conversationReference: TurnContext.getConversationReference(activity)
             });
 
             console.log(`[Mapping] Created: Teams(${teamsConvId}) ↔ Freshchat(${resolveFreshchatConversationId(mapping)})`);
+
+            // Update user's latest conversation index
+            await conversationStore.updateUserLatestConversation(teamsUserId, teamsConvId);
 
             // Store Teams data in Freshchat conversation properties (async, non-blocking)
             const conversationIdToUpdate = freshchatConversationNumericId || freshchatConversationGuid;
@@ -2401,9 +2500,13 @@ async function handleTeamsMessage(context) {
             // Existing conversation - Update conversationReference to track latest active thread
             const latestConversationReference = TurnContext.getConversationReference(activity);
             mapping = await updateConversationMapping(teamsConvId, {
+                teamsUserId: teamsUserId,
                 conversationReference: latestConversationReference
             });
             console.log(`[Mapping] Updated conversationReference to latest thread: ${teamsConvId}`);
+
+            // Update user's latest conversation index
+            await conversationStore.updateUserLatestConversation(teamsUserId, teamsConvId);
 
             // Update Teams data in Freshchat conversation properties (async, non-blocking)
             const conversationIdToUpdate = mapping.freshchatConversationNumericId || mapping.freshchatConversationGuid;
