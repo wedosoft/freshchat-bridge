@@ -1703,9 +1703,12 @@ class FreshchatClient {
                         console.log(`[Freshchat] 🔍 All IDs:`, userConversations);
                         console.log(`[Freshchat] 🔍 Attempting first ID (index 0): ${latestConversationId}`);
 
+                        // Rebuild message parts for retry
+                        const retryMessageParts = buildFreshchatMessageParts(message, attachments);
+
                         // Retry with the latest conversation
                         const retryResponse = await this.axiosInstance.post(`/conversations/${latestConversationId}/messages`, {
-                            message_parts: messageParts,
+                            message_parts: retryMessageParts,
                             actor_type: 'user',
                             actor_id: userId
                         });
