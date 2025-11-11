@@ -2724,12 +2724,11 @@ async function handleTeamsMessage(context) {
             let lastError = null;
             let updatedConversationId = null;
 
-            // Check if conversation is resolved before attempting to send
+            // Check if mapping indicates conversation was resolved
             const primaryConversationId = candidateConversations[0].id;
-            const isActive = await freshchatClient.isConversationActive(primaryConversationId);
 
-            if (!isActive) {
-                console.log(`[Freshchat] Conversation ${primaryConversationId} is resolved, creating new conversation for user ${mapping.freshchatUserId}`);
+            if (mapping.isResolved) {
+                console.log(`[Freshchat] Conversation ${primaryConversationId} was previously resolved, creating new conversation for user ${mapping.freshchatUserId}`);
 
                 try {
                     // Create new conversation with the message
@@ -2757,13 +2756,14 @@ async function handleTeamsMessage(context) {
                     const newConversationId = newConvResponse.data.conversation_id;
                     console.log(`[Freshchat] ✅ New conversation created: ${newConversationId}`);
 
-                    // Update mapping with new conversation ID
+                    // Update mapping with new conversation ID and clear isResolved flag
                     await conversationStore.update(teamsConvId, {
                         freshchatConversationGuid: newConversationId,
-                        freshchatConversationNumericId: newConversationId
+                        freshchatConversationNumericId: newConversationId,
+                        isResolved: false
                     });
 
-                    console.log(`[Mapping] Updated to new conversation ID: ${newConversationId}`);
+                    console.log(`[Mapping] Updated to new conversation ID: ${newConversationId} (cleared isResolved flag)`);
 
                     // Mark as successful and skip the retry loop
                     sendSucceeded = true;
@@ -3956,6 +3956,50 @@ app.post('/freshchat/webhook', async (req, res) => {
             }
 
             console.log('[Freshchat → Teams] Message forwarded successfully');
+        }
+
+        // Handle conversation:resolve event
+        if (action === 'conversation:resolve' && data) {
+            const freshchatConversationId = data.freshchat_conversation_id
+                ? String(data.freshchat_conversation_id)
+                : data.conversation?.freshchat_conversation_id
+                    ? String(data.conversation.freshchat_conversation_id)
+                    : null;
+            const conversationGuid = data.conversation_id || data.conversation?.conversation_id || null;
+
+            console.log(`[Freshchat] Processing conversation:resolve event`);
+            if (freshchatConversationId) {
+                console.log(`[Freshchat] Conversation ID: ${freshchatConversationId}`);
+            }
+            if (conversationGuid) {
+                console.log(`[Freshchat] Conversation GUID: ${conversationGuid}`);
+            }
+
+            if (!freshchatConversationId && !conversationGuid) {
+                console.log(`[Freshchat] Payload missing conversation IDs - cannot mark as resolved`);
+                return res.sendStatus(200);
+            }
+
+            // Find Teams conversation mapping
+            let teamsConvId = null;
+            if (freshchatConversationId) {
+                teamsConvId = await conversationStore.getTeamsIdByFreshchat(freshchatConversationId);
+            }
+            if (!teamsConvId && conversationGuid) {
+                teamsConvId = await conversationStore.getTeamsIdByFreshchat(conversationGuid);
+            }
+
+            if (teamsConvId) {
+                // Mark conversation as resolved in mapping
+                await conversationStore.update(teamsConvId, {
+                    isResolved: true
+                });
+                console.log(`[Mapping] Marked conversation as resolved: Teams(${teamsConvId}) ↔ Freshchat(${freshchatConversationId || conversationGuid})`);
+            } else {
+                console.warn(`[Freshchat] No Teams mapping found for resolved conversation: ${freshchatConversationId || conversationGuid}`);
+            }
+
+            return res.sendStatus(200);
         }
 
         res.sendStatus(200);
