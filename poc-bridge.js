@@ -4208,6 +4208,61 @@ app.post('/debug/reset', async (req, res) => {
     res.json({ message: 'All mappings cleared' });
 });
 
+/**
+ * FAQ endpoint - fetch and cache FAQs from Freshdesk
+ */
+let cachedFAQs = null;
+let faqCacheTime = null;
+const FAQ_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+app.get('/api/faqs', async (req, res) => {
+    try {
+        // Check cache
+        const now = Date.now();
+        if (cachedFAQs && faqCacheTime && (now - faqCacheTime < FAQ_CACHE_TTL)) {
+            console.log('[FAQ] Returning cached FAQs');
+            return res.json({
+                faqs: cachedFAQs,
+                cached: true,
+                cacheAge: Math.floor((now - faqCacheTime) / 1000)
+            });
+        }
+
+        // Fetch fresh data
+        console.log('[FAQ] Fetching fresh FAQs from Freshdesk...');
+        const { fetchAllFAQs } = require('./scripts/fetch-freshdesk-faqs');
+        const faqs = await fetchAllFAQs();
+        
+        // Update cache
+        cachedFAQs = faqs;
+        faqCacheTime = now;
+        
+        res.json({
+            faqs,
+            cached: false,
+            count: faqs.length
+        });
+    } catch (error) {
+        console.error('[FAQ] Error fetching FAQs:', error.message);
+        
+        // Return cached data if available, even if expired
+        if (cachedFAQs) {
+            console.log('[FAQ] Returning stale cache due to error');
+            return res.json({
+                faqs: cachedFAQs,
+                cached: true,
+                stale: true,
+                error: error.message
+            });
+        }
+        
+        res.status(500).json({
+            error: 'Failed to fetch FAQs',
+            message: error.message
+        });
+    }
+});
+
 // ============================================================================
 // Server Start
 // ============================================================================
