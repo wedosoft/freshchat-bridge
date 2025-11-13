@@ -2039,7 +2039,16 @@ function verifyFreshchatSignature(payload, signature) {
         console.log('[Security] Public Key Length:', pkcs8PublicKey.length);
         console.log('[Security] Public Key:\n', pkcs8PublicKey);
         console.log('[Security] Signature:', signature);
-        const payloadBuffer = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, 'utf8');
+
+        // Use rawBodyBuffer to prevent UTF-8 normalization issues
+        let payloadBuffer;
+        if (Buffer.isBuffer(payload)) {
+            payloadBuffer = payload;
+        } else if (payload && payload.rawBodyBuffer) {
+            payloadBuffer = payload.rawBodyBuffer;
+        } else {
+            payloadBuffer = Buffer.from(payload, 'utf8');
+        }
         console.log('[Security] Payload Length:', payloadBuffer.length);
 
         let isValid = false;
@@ -2881,6 +2890,9 @@ const app = express();
 app.use(express.json({
     verify: (req, res, buf, encoding) => {
         const encodingType = encoding || 'utf8';
+        // Preserve original Buffer to prevent UTF-8 normalization issues
+        req.rawBodyBuffer = buf?.length ? Buffer.from(buf) : Buffer.alloc(0);
+        // Keep string version for logging
         req.rawBody = buf?.length ? buf.toString(encodingType) : '';
     }
 }));
@@ -3387,16 +3399,12 @@ app.post('/freshchat/webhook', async (req, res) => {
 
         // Verify webhook signature
         const signature = req.headers['x-freshchat-signature'];
-        const rawPayload = typeof req.rawBody === 'string' && req.rawBody.length > 0
-            ? req.rawBody
-            : JSON.stringify(req.body);
-        
+
         // Debug: Log payload information
         console.log('[Security] Raw body available:', typeof req.rawBody === 'string' && req.rawBody.length > 0);
-        console.log('[Security] Payload source:', req.rawBody?.length > 0 ? 'rawBody' : 'JSON.stringify');
-        console.log('[Security] Payload sample:', rawPayload.substring(0, 200) + '...');
-        
-        const signatureValid = verifyFreshchatSignature(rawPayload, signature);
+        console.log('[Security] Raw body buffer available:', req.rawBodyBuffer ? req.rawBodyBuffer.length : 0);
+
+        const signatureValid = verifyFreshchatSignature(req, signature);
         if (!signatureValid) {
             console.error('[Security] ⚠️ Webhook signature verification failed');
             if (FRESHCHAT_WEBHOOK_SIGNATURE_STRICT) {
