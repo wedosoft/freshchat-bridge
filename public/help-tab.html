@@ -212,11 +212,13 @@
     <script>
       microsoftTeams.app.initialize();
 
-      // Load FAQs from API
+      // Load FAQs from server (server handles caching)
       async function loadFAQs() {
         const container = document.getElementById("faq-container");
 
         try {
+          // Fetch from API (server caches for 10 minutes)
+          console.log('Fetching FAQs from server...');
           const response = await fetch("/api/faqs");
           const data = await response.json();
 
@@ -226,33 +228,16 @@
             return;
           }
 
-          // Clear loading message
-          container.innerHTML = "";
+          // Log cache info
+          if (data.cached) {
+            console.log(`FAQs from server cache (age: ${data.cacheAge}s)`);
+          } else {
+            console.log('FAQs fetched fresh from Freshdesk');
+          }
 
-          // Create FAQ items
-          data.faqs.forEach((faq, index) => {
-            const faqItem = document.createElement("div");
-            faqItem.className = "faq-item";
+          // Render FAQs
+          renderFAQs(data.faqs, container);
 
-            const icon = getFAQIcon(index);
-
-            faqItem.innerHTML = `
-                        <button class="faq-question">
-                            <span>${icon} ${faq.title}</span>
-                            <span class="faq-icon">▼</span>
-                        </button>
-                        <div class="faq-answer">
-                            <div class="faq-content">
-                                ${faq.html || "<p>" + faq.text + "</p>"}
-                            </div>
-                        </div>
-                    `;
-
-            container.appendChild(faqItem);
-          });
-
-          // Add event listeners
-          initializeAccordion();
         } catch (error) {
           console.error("Error loading FAQs:", error);
           container.innerHTML = `
@@ -263,6 +248,37 @@
                     </div>
                 `;
         }
+      }
+
+      function renderFAQs(faqs, container) {
+        // Clear loading message
+        container.innerHTML = "";
+
+        // Create FAQ items
+        faqs.forEach((faq, index) => {
+          const faqItem = document.createElement("div");
+          faqItem.className = "faq-item";
+
+          // Remove emoji from title (keep only text)
+          const cleanTitle = faq.title.replace(/[\u{1F300}-\u{1F9FF}]/gu, '').trim();
+
+          faqItem.innerHTML = `
+                        <button class="faq-question">
+                            <span>${cleanTitle}</span>
+                            <span class="faq-icon">▼</span>
+                        </button>
+                        <div class="faq-answer">
+                            <div class="faq-content">
+                                ${faq.html || "<p>" + faq.text + "</p>"}
+                            </div>
+                        </div>
+                    `;
+
+          container.appendChild(faqItem);
+        });
+
+        // Add event listeners
+        initializeAccordion();
       }
 
       function getFAQIcon(index) {

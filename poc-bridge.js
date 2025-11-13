@@ -4213,7 +4213,20 @@ app.post('/debug/reset', async (req, res) => {
  */
 let cachedFAQs = null;
 let faqCacheTime = null;
-const FAQ_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const FAQ_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * FAQ cache refresh endpoint (manual cache invalidation)
+ */
+app.post('/api/faqs/refresh', (req, res) => {
+    cachedFAQs = null;
+    faqCacheTime = null;
+    console.log('[FAQ] Cache manually cleared');
+    res.json({ 
+        message: 'FAQ cache cleared successfully',
+        timestamp: new Date().toISOString()
+    });
+});
 
 app.get('/api/faqs', async (req, res) => {
     try {
