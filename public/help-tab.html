@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EXO </title>
+    <title>EXO 메일 FAQ</title>
     <script src="https://res.cdn.office.net/teams-js/2.0.0/js/MicrosoftTeams.min.js"></script>
     <style>
         * {
@@ -53,10 +53,6 @@
             padding: 40px;
         }
         
-        .section + .section {
-            border-top: 1px solid #e8e8e8;
-        }
-        
         .section h2 {
             color: #4b5563;
             font-size: 22px;
@@ -64,83 +60,6 @@
             margin-bottom: 24px;
             padding-left: 12px;
             border-left: 4px solid #9ca3af;
-        }
-        
-        .link-card {
-            display: flex;
-            align-items: flex-start;
-            padding: 20px;
-            margin-bottom: 12px;
-            background: #f9fafb;
-            border-radius: 10px;
-            border: 1px solid transparent;
-            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-            cursor: pointer;
-        }
-        
-        .link-card:hover {
-            background: #f3f4f6;
-            border-color: #d1d5db;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-        }
-        
-        .link-card:active {
-            transform: translateY(0);
-        }
-        
-        .link-icon {
-            font-size: 28px;
-            margin-right: 18px;
-            flex-shrink: 0;
-            opacity: 0.7;
-            filter: grayscale(100%);
-        }
-        
-        .link-content {
-            flex: 1;
-        }
-        
-        .link-content a {
-            color: #374151;
-            text-decoration: none;
-            font-size: 17px;
-            font-weight: 600;
-            display: block;
-            margin-bottom: 6px;
-            transition: color 0.2s;
-        }
-        
-        .link-card:hover .link-content a {
-            color: #6b7280;
-        }
-        
-        .link-content p {
-            color: #6b7280;
-            font-size: 14px;
-            line-height: 1.5;
-        }
-        
-        .info-box {
-            margin: 40px;
-            padding: 30px;
-            background: #9ca3af;
-            color: #ffffff;
-            border-radius: 12px;
-            text-align: center;
-        }
-        
-        .info-box strong {
-            display: block;
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 12px;
-        }
-        
-        .info-box p {
-            font-size: 15px;
-            line-height: 1.7;
-            opacity: 0.9;
         }
         
         /* FAQ Accordion Styles */
@@ -200,31 +119,31 @@
         }
         
         .faq-answer.active {
-            max-height: 2000px;
+            max-height: 3000px;
         }
         
         .faq-content {
             padding: 20px;
         }
         
-        .faq-answer p {
+        .faq-content p {
             color: #4b5563;
             line-height: 1.8;
             margin-bottom: 12px;
         }
         
-        .faq-answer ul {
+        .faq-content ul {
             margin: 12px 0;
             padding-left: 20px;
         }
         
-        .faq-answer li {
+        .faq-content li {
             color: #4b5563;
             line-height: 1.8;
             margin-bottom: 8px;
         }
         
-        .faq-answer img {
+        .faq-content img {
             max-width: 100%;
             height: auto;
             margin: 16px 0;
@@ -232,33 +151,26 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
         
-        .faq-answer strong {
+        .faq-content strong {
             color: #374151;
             font-weight: 600;
         }
         
-        .faq-tip {
-            background: #fef3c7;
-            border-left: 4px solid #f59e0b;
-            padding: 12px 16px;
-            margin: 16px 0;
-            border-radius: 6px;
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6b7280;
         }
         
-        .faq-tip strong {
-            color: #d97706;
+        .loading-icon {
+            font-size: 32px;
+            margin-bottom: 12px;
         }
         
-        .faq-warning {
-            background: #fee2e2;
-            border-left: 4px solid #ef4444;
-            padding: 12px 16px;
-            margin: 16px 0;
-            border-radius: 6px;
-        }
-        
-        .faq-warning strong {
-            color: #dc2626;
+        .error {
+            text-align: center;
+            padding: 40px 20px;
+            color: #ef4444;
         }
         
         @media (max-width: 768px) {
@@ -267,24 +179,15 @@
             }
             
             .header {
-                padding: 40px 30px;
+                padding: 25px 20px;
             }
             
             .header h1 {
-                font-size: 26px;
+                font-size: 24px;
             }
             
             .section {
-                padding: 30px 25px;
-            }
-            
-            .link-card {
-                padding: 16px;
-            }
-            
-            .info-box {
-                margin: 30px 25px;
-                padding: 25px;
+                padding: 30px 20px;
             }
         }
     </style>
@@ -292,209 +195,84 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>EXO Help FAQs</h1>
+            <h1>EXO 메일 자주 묻는 질문</h1>
+            <p class="subtitle">Outlook 사용 가이드</p>
         </div>
         
         <div class="section">
+            <h2>자주 묻는 질문 (FAQ)</h2>
             
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>📧 읽지 않은 메일만 모아서 볼 수 있나요?</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> Outlook에서는 "검색폴더"라는 기능을 이용해서 특정 조건에 맞는 모아보기 폴더를 생성할 수 있습니다.</p>
-                        
-                        <p><strong>방법:</strong></p>
-                        <ul>
-                            <li>아웃룩 화면 좌측 폴더리스트 하단에서 "검색 폴더"를 확인할 수 있습니다.</li>
-                            <li>"새 검색 폴더"를 만들때 유형에 "읽지 않은 메일"을 선택하면 읽지 않은 메일만 모아서 볼 수 있는 폴더가 생성됩니다.</li>
-                        </ul>
-                        
-                        <div class="faq-tip">
-                            <strong>💡 Tip:</strong> 자주 사용하신다면 "즐겨찾기" 설정해두세요.
-                        </div>
-                        
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117136/original/ijFoTh1HicdoI4-xK3qryExteeGgUvdoEA.png?1762988100" alt="검색 폴더 설정 화면">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>👥 수신인에 부서(실, 그룹 등)를 넣어서 메일을 발송할 수 있나요?</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> 포스코인터내셔널 Outlook 내부의 "Group" 앱을 이용하면 부서 단위로 메일을 보낼 수 있습니다.</p>
-                        
-                        <p><strong>방법:</strong></p>
-                        <ul>
-                            <li>상단의 '메시지' 탭에서 Group 아이콘을 클릭하여 조직도를 확인하고 사람 또는 부서를 선택하여 수신인에 추가하세요.</li>
-                        </ul>
-                        
-                        <div class="faq-tip">
-                            <strong>💡 Tip:</strong> 상단의 "메시지"탭은 메일 작성 페이지가 열려 있는 상태에서만 나타납니다.
-                        </div>
-                        
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117068/original/xHsocrgzBOSxJ4xCoL-ZCQmLJeMiOsqIUQ.png?1762987949" alt="Group 앱 사용 화면 1">
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117069/original/UAmJrb2sgrAaihyRKhA-pch62Rvu0K35RQ.png?1762987949" alt="Group 앱 사용 화면 2">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>♻️ 기존 메일을 재사용할 수 있나요?</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> Outlook에서는 "메시지 다시 보내기" 기능을 이용하여 보낸 메일을 재사용할 수 있습니다.</p>
-                        
-                        <p><strong>방법1:</strong></p>
-                        <ul>
-                            <li>보낸메일을 열고, 우측에 점 3개 버튼을 클릭합니다.</li>
-                            <li>메뉴에서 '고급 작업' > '메시지 다시 보내기' 버튼을 클릭합니다.</li>
-                        </ul>
-                        
-                        <p><strong>방법2:</strong></p>
-                        <ul>
-                            <li>보낸메일을 연 상태에서 상단의 "홈" 탭에 있는 "메시지 다시 보내기" 버튼을 클릭합니다.</li>
-                        </ul>
-                        
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117215/original/Bt3FPgnj3QNSRi-JeAUH2gJkoeM0UazKtw.png?1762988314" alt="메시지 다시 보내기 기능">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>🔓 외부로 메일을 보내야 합니다. 문서 복호화는 어떻게 하나요?</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> Outlook에서 파일을 첨부하여 발송할 경우 수신인별로 적절한 파일형태로 자동변환되어 발송됩니다.</p>
-                        
-                        <p><strong>변환 기준:</strong></p>
-                        <ul>
-                            <li><strong>고객사(@gmail.com 등):</strong> 자동 복호화</li>
-                            <li><strong>그룹사(@posco.com 등):</strong> DRM으로 변환</li>
-                            <li><strong>내부(@poscointl.com):</strong> 파일변환 없이 발송</li>
-                        </ul>
-                        
-                        <div class="faq-warning">
-                            <strong>⚠️ 주의1:</strong> 원드라이브(쉐어포인트) 파일을 링크로 첨부하여 발송할 경우에는 변환되지 않습니다. 링크로 첨부된 파일은 메일 작성 화면에서 첨부파일을 클릭하면 파일첨부로 변경할 수 있습니다.
-                        </div>
-                        
-                        <div class="faq-warning">
-                            <strong>⚠️ 주의2:</strong> MIP레이블이 "기밀"로 설정된 경우 자동 복호화되지 않습니다.
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>📇 EP에서 사용하던 메일주소 등 연락처를 Outlook에서 쓸 수 있나요?</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> EP에 연락처 다운로드 기능을 추가하였습니다. EP에서 주소록을 다운받은 후 Outlook에 업로드하여 사용 가능합니다.</p>
-                        
-                        <p><strong>방법:</strong></p>
-                        <p><strong>① 접속:</strong> EP메일로 접속하여 우측상단 프로필 옆 주소록을 클릭합니다.</p>
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117299/original/AlLVIyKyeEOIcuknrGwQ7PPL-U6VybLeVA.png?1762988621" alt="EP 주소록 다운로드">
-                        
-                        <p><strong>② 다운로드:</strong> 주소록 내보내기를 선택하여 파일을 다운로드 합니다. 파일을 열고 UTF-9 형식으로 변환하여 재저장합니다.</p>
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117311/original/nJRKovxRZRe98D1BTnSvXP-yTQUyl7pkIw.png?1762988682" alt="주소록 파일 변환">
-                        
-                        <p><strong>③ 업로드:</strong> Outlook 화면 좌측 "사람"을 클릭하고, 상단의 새연락처-목록을 통해 파일을 업로드 합니다.</p>
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117322/original/_VDMBiWJrd8kD1cSsWCCdcRnGJmAwFSkCA.png?1762988706" alt="Outlook 연락처 업로드">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>🔍 방금 보낸 메일이 없어졌어요. 받은 메일이 갑자기 사라졌어요. 메일이 자동으로 그룹화 되어 불편해요</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> Outlook에서는 전달, 회신 등을 통해 생성된 유사한 메일들을 묶어서 보여주는 그룹화 기능이 기본적용 되어있습니다. 그룹화 기능이 불편하신 분은 해제하시면 시간순서대로 메일을 확인할 수 있습니다.</p>
-                        
-                        <p><strong>방법:</strong></p>
-                        <ul>
-                            <li>Outlook 상단의 "보기"탭에서 "대화" 아이콘 클릭</li>
-                            <li>"메시지 목록" → "메시지 그룹화 안함" 선택</li>
-                        </ul>
-                        
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117347/original/aOc6DCeEr_Q4SZuIsu2-lBENVzGyR8ceLA.png?1762988783" alt="메시지 그룹화 해제">
-                    </div>
-                </div>
-            </div>
-            
-            <div class="faq-item">
-                <button class="faq-question">
-                    <span>✏️ 메일 작성 시 빨간 줄 없애는 방법이 있을까요?</span>
-                    <span class="faq-icon">▼</span>
-                </button>
-                <div class="faq-answer">
-                    <div class="faq-content">
-                        <p><strong>답변:</strong> '메일작성' > '옵션' > '편집자' > '편집기 설정'에서 '맞춤법' 및 '어법'을 비활성화 하면 됩니다.</p>
-                        
-                        <img src="https://s3.amazonaws.com/cdn.freshdesk.com/data/helpdesk/attachments/production/159004117376/original/xDPX4iisJzFNy2J0ebYiFTKLPpD1-xyDPA.png?1762988856" alt="맞춤법 검사 비활성화">
-                    </div>
+            <div id="faq-container">
+                <div class="loading">
+                    <div class="loading-icon">⏳</div>
+                    <div>FAQ를 불러오는 중...</div>
                 </div>
             </div>
         </div>
-        
-        <!--div class="section">
-            <h2>빠른 링크</h2>
-            
-            <div class="link-card">
-                <div class="link-icon">📄</div>
-                <div class="link-content">
-                    <a href="https://example.com/manual" target="_blank">
-                        <strong>사용자 매뉴얼</strong>
-                    </a>
-                    <p>EXO Help 사용 방법 및 가이드</p>
-                </div>
-            </div>
-            
-            <div class="link-card">
-                <div class="link-icon">❓</div>
-                <div class="link-content">
-                    <a href="https://example.com/faq" target="_blank">
-                        <strong>자주 묻는 질문 (FAQ)</strong>
-                    </a>
-                    <p>자주 발생하는 질문과 답변</p>
-                </div>
-            </div>
-            
-            <div class="link-card">
-                <div class="link-icon">📚</div>
-                <div class="link-content">
-                    <a href="https://example.com/kb" target="_blank">
-                        <strong>지식 베이스</strong>
-                    </a>
-                    <p>문제 해결 가이드 및 팁</p>
-                </div>
-            </div>
-        </div-->
-
     </div>
     
     <script>
         microsoftTeams.app.initialize();
         
-        // FAQ Accordion functionality
-        document.addEventListener('DOMContentLoaded', function() {
+        // Load FAQs from API
+        async function loadFAQs() {
+            const container = document.getElementById('faq-container');
+            
+            try {
+                const response = await fetch('/api/faqs');
+                const data = await response.json();
+                
+                if (!data.faqs || data.faqs.length === 0) {
+                    container.innerHTML = '<div class="error">FAQ를 찾을 수 없습니다.</div>';
+                    return;
+                }
+                
+                // Clear loading message
+                container.innerHTML = '';
+                
+                // Create FAQ items
+                data.faqs.forEach((faq, index) => {
+                    const faqItem = document.createElement('div');
+                    faqItem.className = 'faq-item';
+                    
+                    const icon = getFAQIcon(index);
+                    
+                    faqItem.innerHTML = `
+                        <button class="faq-question">
+                            <span>${icon} ${faq.title}</span>
+                            <span class="faq-icon">▼</span>
+                        </button>
+                        <div class="faq-answer">
+                            <div class="faq-content">
+                                ${faq.html || '<p>' + faq.text + '</p>'}
+                            </div>
+                        </div>
+                    `;
+                    
+                    container.appendChild(faqItem);
+                });
+                
+                // Add event listeners
+                initializeAccordion();
+                
+            } catch (error) {
+                console.error('Error loading FAQs:', error);
+                container.innerHTML = `
+                    <div class="error">
+                        <div style="font-size: 32px; margin-bottom: 12px;">⚠️</div>
+                        <div>FAQ를 불러오는데 실패했습니다.</div>
+                        <div style="font-size: 14px; margin-top: 8px; opacity: 0.7;">${error.message}</div>
+                    </div>
+                `;
+            }
+        }
+        
+        function getFAQIcon(index) {
+            const icons = ['📧', '👥', '♻️', '🔓', '📇', '🔍', '✏️', '📌', '🔔', '⚙️'];
+            return icons[index % icons.length];
+        }
+        
+        function initializeAccordion() {
             const faqQuestions = document.querySelectorAll('.faq-question');
             
             faqQuestions.forEach(question => {
@@ -518,8 +296,10 @@
                     }
                 });
             });
-        });
+        }
+        
+        // Load FAQs on page load
+        document.addEventListener('DOMContentLoaded', loadFAQs);
     </script>
-    </div>
 </body>
 </html>
