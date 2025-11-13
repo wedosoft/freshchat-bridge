@@ -1,305 +1,314 @@
 <!DOCTYPE html>
 <html lang="ko">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>EXO 메일 FAQ</title>
     <script src="https://res.cdn.office.net/teams-js/2.0.0/js/MicrosoftTeams.min.js"></script>
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background: #f5f5f5;
+        color: #333333;
+        line-height: 1.6;
+        padding: 30px 20px;
+      }
+
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: #ffffff;
+        border-radius: 16px;
+        box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #6b7280 0%, #7f8694 100%);
+        color: #ffffff;
+        padding: 33px 40px;
+        text-align: center;
+      }
+
+      .header h1 {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        margin-bottom: 8px;
+      }
+
+      .header .subtitle {
+        font-size: 15px;
+        opacity: 0.85;
+        font-weight: 400;
+      }
+
+      .section {
+        padding: 40px;
+      }
+
+      .section h2 {
+        color: #4b5563;
+        font-size: 22px;
+        font-weight: 600;
+        margin-bottom: 24px;
+        padding-left: 12px;
+        border-left: 4px solid #9ca3af;
+      }
+
+      /* FAQ Accordion Styles */
+      .faq-item {
+        margin-bottom: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        overflow: hidden;
+        transition: all 0.2s;
+      }
+
+      .faq-item:hover {
+        border-color: #d1d5db;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      }
+
+      .faq-question {
+        width: 100%;
+        padding: 18px 20px;
+        background: #ffffff;
+        border: none;
+        text-align: left;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 16px;
+        font-weight: 600;
+        color: #374151;
+        transition: background-color 0.2s;
+      }
+
+      .faq-question:hover {
+        background: #f9fafb;
+      }
+
+      .faq-question.active {
+        background: #f3f4f6;
+        color: #6b7280;
+      }
+
+      .faq-icon {
+        font-size: 20px;
+        transition: transform 0.3s ease;
+        color: #9ca3af;
+      }
+
+      .faq-question.active .faq-icon {
+        transform: rotate(180deg);
+      }
+
+      .faq-answer {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease;
+        background: #fafbfc;
+      }
+
+      .faq-answer.active {
+        max-height: 3000px;
+      }
+
+      .faq-content {
+        padding: 20px;
+      }
+
+      .faq-content p {
+        color: #4b5563;
+        line-height: 1.8;
+        margin-bottom: 12px;
+      }
+
+      .faq-content ul {
+        margin: 12px 0;
+        padding-left: 20px;
+      }
+
+      .faq-content li {
+        color: #4b5563;
+        line-height: 1.8;
+        margin-bottom: 8px;
+      }
+
+      .faq-content img {
+        max-width: 100%;
+        height: auto;
+        margin: 16px 0;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+
+      .faq-content strong {
+        color: #374151;
+        font-weight: 600;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 40px 20px;
+        color: #6b7280;
+      }
+
+      .loading-icon {
+        font-size: 32px;
+        margin-bottom: 12px;
+      }
+
+      .error {
+        text-align: center;
+        padding: 40px 20px;
+        color: #ef4444;
+      }
+
+      @media (max-width: 768px) {
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: #f5f5f5;
-            color: #333333;
-            line-height: 1.6;
-            padding: 30px 20px;
+          padding: 20px 10px;
         }
-        
-        .container {
-            max-width: 900px;
-            margin: 0 auto;
-            background: #ffffff;
-            border-radius: 16px;
-            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
-            overflow: hidden;
-        }
-        
+
         .header {
-            background: linear-gradient(135deg, #6b7280 0%, #7f8694 100%);
-            color: #ffffff;
-            padding: 33px 40px;
-            text-align: center;
+          padding: 25px 20px;
         }
-        
+
         .header h1 {
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            margin-bottom: 8px;
+          font-size: 24px;
         }
-        
-        .header .subtitle {
-            font-size: 15px;
-            opacity: 0.85;
-            font-weight: 400;
-        }
-        
+
         .section {
-            padding: 40px;
+          padding: 30px 20px;
         }
-        
-        .section h2 {
-            color: #4b5563;
-            font-size: 22px;
-            font-weight: 600;
-            margin-bottom: 24px;
-            padding-left: 12px;
-            border-left: 4px solid #9ca3af;
-        }
-        
-        /* FAQ Accordion Styles */
-        .faq-item {
-            margin-bottom: 12px;
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            overflow: hidden;
-            transition: all 0.2s;
-        }
-        
-        .faq-item:hover {
-            border-color: #d1d5db;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-        }
-        
-        .faq-question {
-            width: 100%;
-            padding: 18px 20px;
-            background: #ffffff;
-            border: none;
-            text-align: left;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 16px;
-            font-weight: 600;
-            color: #374151;
-            transition: background-color 0.2s;
-        }
-        
-        .faq-question:hover {
-            background: #f9fafb;
-        }
-        
-        .faq-question.active {
-            background: #f3f4f6;
-            color: #6b7280;
-        }
-        
-        .faq-icon {
-            font-size: 20px;
-            transition: transform 0.3s ease;
-            color: #9ca3af;
-        }
-        
-        .faq-question.active .faq-icon {
-            transform: rotate(180deg);
-        }
-        
-        .faq-answer {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease;
-            background: #fafbfc;
-        }
-        
-        .faq-answer.active {
-            max-height: 3000px;
-        }
-        
-        .faq-content {
-            padding: 20px;
-        }
-        
-        .faq-content p {
-            color: #4b5563;
-            line-height: 1.8;
-            margin-bottom: 12px;
-        }
-        
-        .faq-content ul {
-            margin: 12px 0;
-            padding-left: 20px;
-        }
-        
-        .faq-content li {
-            color: #4b5563;
-            line-height: 1.8;
-            margin-bottom: 8px;
-        }
-        
-        .faq-content img {
-            max-width: 100%;
-            height: auto;
-            margin: 16px 0;
-            border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        
-        .faq-content strong {
-            color: #374151;
-            font-weight: 600;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 40px 20px;
-            color: #6b7280;
-        }
-        
-        .loading-icon {
-            font-size: 32px;
-            margin-bottom: 12px;
-        }
-        
-        .error {
-            text-align: center;
-            padding: 40px 20px;
-            color: #ef4444;
-        }
-        
-        @media (max-width: 768px) {
-            body {
-                padding: 20px 10px;
-            }
-            
-            .header {
-                padding: 25px 20px;
-            }
-            
-            .header h1 {
-                font-size: 24px;
-            }
-            
-            .section {
-                padding: 30px 20px;
-            }
-        }
+      }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div class="container">
-        <div class="header">
-            <h1>EXO 메일 자주 묻는 질문</h1>
-            <p class="subtitle">Outlook 사용 가이드</p>
+      <div class="header">
+        <h1>EXO 메일 자주 묻는 질문</h1>
+      </div>
+
+      <div class="section">
+        <div id="faq-container">
+          <div class="loading">
+            <div class="loading-icon">⏳</div>
+            <div>FAQ를 불러오는 중...</div>
+          </div>
         </div>
-        
-        <div class="section">
-            <h2>자주 묻는 질문 (FAQ)</h2>
-            
-            <div id="faq-container">
-                <div class="loading">
-                    <div class="loading-icon">⏳</div>
-                    <div>FAQ를 불러오는 중...</div>
-                </div>
-            </div>
-        </div>
+      </div>
     </div>
-    
+
     <script>
-        microsoftTeams.app.initialize();
-        
-        // Load FAQs from API
-        async function loadFAQs() {
-            const container = document.getElementById('faq-container');
-            
-            try {
-                const response = await fetch('/api/faqs');
-                const data = await response.json();
-                
-                if (!data.faqs || data.faqs.length === 0) {
-                    container.innerHTML = '<div class="error">FAQ를 찾을 수 없습니다.</div>';
-                    return;
-                }
-                
-                // Clear loading message
-                container.innerHTML = '';
-                
-                // Create FAQ items
-                data.faqs.forEach((faq, index) => {
-                    const faqItem = document.createElement('div');
-                    faqItem.className = 'faq-item';
-                    
-                    const icon = getFAQIcon(index);
-                    
-                    faqItem.innerHTML = `
+      microsoftTeams.app.initialize();
+
+      // Load FAQs from API
+      async function loadFAQs() {
+        const container = document.getElementById("faq-container");
+
+        try {
+          const response = await fetch("/api/faqs");
+          const data = await response.json();
+
+          if (!data.faqs || data.faqs.length === 0) {
+            container.innerHTML =
+              '<div class="error">FAQ를 찾을 수 없습니다.</div>';
+            return;
+          }
+
+          // Clear loading message
+          container.innerHTML = "";
+
+          // Create FAQ items
+          data.faqs.forEach((faq, index) => {
+            const faqItem = document.createElement("div");
+            faqItem.className = "faq-item";
+
+            const icon = getFAQIcon(index);
+
+            faqItem.innerHTML = `
                         <button class="faq-question">
                             <span>${icon} ${faq.title}</span>
                             <span class="faq-icon">▼</span>
                         </button>
                         <div class="faq-answer">
                             <div class="faq-content">
-                                ${faq.html || '<p>' + faq.text + '</p>'}
+                                ${faq.html || "<p>" + faq.text + "</p>"}
                             </div>
                         </div>
                     `;
-                    
-                    container.appendChild(faqItem);
-                });
-                
-                // Add event listeners
-                initializeAccordion();
-                
-            } catch (error) {
-                console.error('Error loading FAQs:', error);
-                container.innerHTML = `
+
+            container.appendChild(faqItem);
+          });
+
+          // Add event listeners
+          initializeAccordion();
+        } catch (error) {
+          console.error("Error loading FAQs:", error);
+          container.innerHTML = `
                     <div class="error">
                         <div style="font-size: 32px; margin-bottom: 12px;">⚠️</div>
                         <div>FAQ를 불러오는데 실패했습니다.</div>
                         <div style="font-size: 14px; margin-top: 8px; opacity: 0.7;">${error.message}</div>
                     </div>
                 `;
-            }
         }
-        
-        function getFAQIcon(index) {
-            const icons = ['📧', '👥', '♻️', '🔓', '📇', '🔍', '✏️', '📌', '🔔', '⚙️'];
-            return icons[index % icons.length];
-        }
-        
-        function initializeAccordion() {
-            const faqQuestions = document.querySelectorAll('.faq-question');
-            
-            faqQuestions.forEach(question => {
-                question.addEventListener('click', function() {
-                    const answer = this.nextElementSibling;
-                    const isActive = this.classList.contains('active');
-                    
-                    // Close all other FAQs
-                    faqQuestions.forEach(q => {
-                        const a = q.nextElementSibling;
-                        q.classList.remove('active');
-                        a.style.maxHeight = null;
-                        a.classList.remove('active');
-                    });
-                    
-                    // Toggle current FAQ
-                    if (!isActive) {
-                        this.classList.add('active');
-                        answer.classList.add('active');
-                        answer.style.maxHeight = answer.scrollHeight + "px";
-                    }
-                });
+      }
+
+      function getFAQIcon(index) {
+        const icons = [
+          "📧",
+          "👥",
+          "♻️",
+          "🔓",
+          "📇",
+          "🔍",
+          "✏️",
+          "📌",
+          "🔔",
+          "⚙️",
+        ];
+        return icons[index % icons.length];
+      }
+
+      function initializeAccordion() {
+        const faqQuestions = document.querySelectorAll(".faq-question");
+
+        faqQuestions.forEach((question) => {
+          question.addEventListener("click", function () {
+            const answer = this.nextElementSibling;
+            const isActive = this.classList.contains("active");
+
+            // Close all other FAQs
+            faqQuestions.forEach((q) => {
+              const a = q.nextElementSibling;
+              q.classList.remove("active");
+              a.style.maxHeight = null;
+              a.classList.remove("active");
             });
-        }
-        
-        // Load FAQs on page load
-        document.addEventListener('DOMContentLoaded', loadFAQs);
+
+            // Toggle current FAQ
+            if (!isActive) {
+              this.classList.add("active");
+              answer.classList.add("active");
+              answer.style.maxHeight = answer.scrollHeight + "px";
+            }
+          });
+        });
+      }
+
+      // Load FAQs on page load
+      document.addEventListener("DOMContentLoaded", loadFAQs);
     </script>
-</body>
+  </body>
 </html>
