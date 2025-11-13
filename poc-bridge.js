@@ -722,13 +722,45 @@ async function storeBufferAsPublicFile(buffer, filename) {
         return null;
     }
 
-    // Size limit: 20MB
-    const MAX_FILE_SIZE = 20 * 1024 * 1024;
+    // Size limit: 2MB for Redis storage (memory protection)
+    const MAX_FILE_SIZE = 2 * 1024 * 1024;
     if (buffer.length > MAX_FILE_SIZE) {
         console.warn(`[Files] File ${filename} exceeds size limit (${buffer.length} bytes > ${MAX_FILE_SIZE} bytes)`);
         return null;
     }
 
+    // Try Redis-based storage first (for multi-machine support)
+    if (redisClient) {
+        try {
+            // Generate unique key
+            const key = `img:${Date.now()}:${crypto.randomBytes(8).toString('hex')}`;
+
+            // Store image in Redis with 1 hour TTL
+            await redisClient.set(key, buffer, 'EX', 3600);
+
+            // Store metadata
+            const contentType = mime.lookup(filename) || 'application/octet-stream';
+            await redisClient.hset(`${key}:meta`, {
+                filename: filename,
+                contentType: contentType,
+                size: buffer.length.toString(),
+                createdAt: Date.now().toString()
+            });
+            await redisClient.expire(`${key}:meta`, 3600);
+
+            // Generate public URL
+            const baseUrl = PUBLIC_URL.replace(/\/$/, '');
+            const publicUrl = `${baseUrl}/files/${key}`;
+
+            console.log(`[Files] Stored in Redis: ${key} (${buffer.length} bytes) -> ${publicUrl}`);
+            return publicUrl;
+        } catch (redisError) {
+            console.error(`[Files] Redis storage failed:`, redisError.message);
+            // Fall through to local disk fallback
+        }
+    }
+
+    // Fallback: Local disk storage (original behavior)
     try {
         // Normalize filename (remove any path traversal attempts)
         const safeName = path.basename(filename);
@@ -741,7 +773,7 @@ async function storeBufferAsPublicFile(buffer, filename) {
         const baseUrl = PUBLIC_URL.replace(/\/$/, '');
         const publicUrl = `${baseUrl}/files/${encodeURIComponent(safeName)}`;
 
-        console.log(`[Files] Stored file successfully: ${safeName} (${buffer.length} bytes) -> ${publicUrl}`);
+        console.log(`[Files] Stored locally (fallback): ${safeName} (${buffer.length} bytes) -> ${publicUrl}`);
         return publicUrl;
     } catch (error) {
         console.error(`[Files] Failed to persist ${filename} for public access:`, error.message);
@@ -2852,6 +2884,63 @@ app.use(express.json({
         req.rawBody = buf?.length ? buf.toString(encodingType) : '';
     }
 }));
+// Redis-based file serving (for multi-machine support)
+app.get('/files/:key', async (req, res) => {
+    const key = req.params.key;
+
+    // Check if this is a Redis key (format: img:timestamp:hash)
+    if (key.startsWith('img:')) {
+        if (!redisClient) {
+            console.warn('[Files] Redis not available for key:', key);
+            return res.sendStatus(503);
+        }
+
+        try {
+            // Get image buffer from Redis
+            const buffer = await redisClient.getBuffer(key);
+
+            if (!buffer) {
+                console.warn('[Files] Redis key not found:', key);
+                return res.sendStatus(404);
+            }
+
+            // Get metadata
+            const meta = await redisClient.hgetall(`${key}:meta`);
+
+            const contentType = meta.contentType || 'application/octet-stream';
+            const filename = meta.filename || 'attachment';
+
+            // Set response headers
+            res.set({
+                'Content-Type': contentType,
+                'Content-Length': buffer.length,
+                'Cache-Control': 'public, max-age=3600',
+                'Content-Disposition': `inline; filename="${encodeURIComponent(filename)}"`
+            });
+
+            console.log(`[Files] Serving from Redis: ${key} (${buffer.length} bytes)`);
+            return res.send(buffer);
+
+        } catch (error) {
+            console.error('[Files] Redis retrieval error:', error.message);
+            return res.sendStatus(500);
+        }
+    }
+
+    // Fallback: serve from local disk (existing behavior)
+    const safeName = path.basename(key);
+    const filepath = path.join(UPLOADS_DIR, safeName);
+
+    if (fs.existsSync(filepath)) {
+        console.log(`[Files] Serving from local disk (fallback): ${safeName}`);
+        return res.sendFile(filepath);
+    }
+
+    console.warn('[Files] File not found:', key);
+    return res.sendStatus(404);
+});
+
+// Static file serving as final fallback
 app.use('/files', express.static(UPLOADS_DIR));
 
 // Allow Azure portal and Bot Framework service to access bot endpoints during testing

@@ -1,0 +1,69 @@
+ERROR LOG FOR ANALYSIS - IMAGE_EMPTY_CONTENT
+================================================
+
+[Freshchat] Error sending message: { code: 400, status: 'INVALID_VALUE', message: 'IMAGE_EMPTY_CONTENT' }
+
+Error Response Details:
+- Status: 400 Bad Request
+- Error Code: INVALID_VALUE
+- Error Message: IMAGE_EMPTY_CONTENT
+- X-Trace-ID: 00-8118ffee73fa4580528d111b00e18a3a-9661e3743010d86a-00
+- X-Server-Processing-Time-MS: 297
+
+Request Configuration:
+- Method: POST
+- URL: /conversations/d60eed67-c4c7-49b0-8455-f8a1548e33e5/messages
+- Base URL: https://posco-903107721895127531-c887bb04d4126cf17616271.freshchat.com/v2
+
+Request Payload:
+{
+  "message_parts": [
+    {
+      "text": {
+        "content": "현재 제가 보는 화면에서는 메세지 다시 보내기 아이콘이 보이지 않습니다 어떻게 보이게 할 수 있을까요?"
+      }
+    },
+    {
+      "image": {
+        "url": "https://freshchat-bridge.fly.dev/files/1762997752981-attachment.png",
+        "contentType": "image/png",
+        "content_type": "image/png",
+        "fileHash": "apo6k69cpf",
+        "file_hash": "apo6k69cpf"
+      }
+    }
+  ],
+  "actor_type": "user",
+  "actor_id": "cf8a066a-b214-4f40-b4c7-c9edb1ff290b"
+}
+
+Image URL Verification:
+- URL: https://freshchat-bridge.fly.dev/files/1762997752981-attachment.png
+- Accessibility Test Result: HTTP 200 OK
+- Content-Type: image/png
+- Content-Length: 889975 bytes (869KB)
+- Cache-Control: public, max-age=0
+- Server: Fly/3807f396 (2025-11-11)
+
+Stack Trace:
+at settle (/app/node_modules/axios/dist/node/axios.cjs:2106:12)
+at IncomingMessage.handleStreamEnd (/app/node_modules/axios/dist/node/axios.cjs:3491:11)
+at Axios.request (/app/node_modules/axios/dist/node/axios.cjs:4731:41)
+at async FreshchatClient.sendMessage (/app/poc-bridge.js:1698:30)
+at async handleTeamsMessage (/app/poc-bridge.js:2783:40)
+
+Context:
+- This error occurs frequently when forwarding Teams messages with image attachments to Freshchat
+- The image URL is publicly accessible and returns valid PNG content
+- The fileHash (apo6k69cpf) is obtained from Freshchat's /files/upload API
+- Both text and image parts are sent in the same message_parts array
+- The image was successfully uploaded to Freshchat before sending the message
+
+Questions to investigate:
+1. Why does Freshchat return IMAGE_EMPTY_CONTENT when the URL is accessible?
+2. Is there a timing issue between file upload and message send?
+3. Does Freshchat require additional fields in the image payload?
+4. Is the URL format accepted by Freshchat's image fetcher?
+5. Could there be network/firewall issues between Freshchat and fly.dev?
+6. Does the presence of both fileHash and url cause conflicts?
+7. Is there a specific order or structure required for message_parts?
