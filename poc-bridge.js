@@ -2042,14 +2042,20 @@ function verifyFreshchatSignature(payload, signature) {
 
         // Use rawBodyBuffer to prevent UTF-8 normalization issues
         let payloadBuffer;
+        let bufferSource = 'unknown';
         if (Buffer.isBuffer(payload)) {
             payloadBuffer = payload;
+            bufferSource = 'direct-buffer';
         } else if (payload && payload.rawBodyBuffer) {
             payloadBuffer = payload.rawBodyBuffer;
+            bufferSource = 'rawBodyBuffer';
         } else {
             payloadBuffer = Buffer.from(payload, 'utf8');
+            bufferSource = 'utf8-conversion';
         }
+        console.log('[Security] Buffer source:', bufferSource);
         console.log('[Security] Payload Length:', payloadBuffer.length);
+        console.log('[Security] Payload first 100 bytes (hex):', payloadBuffer.slice(0, 100).toString('hex'));
 
         let isValid = false;
         let verificationMethod = null;
