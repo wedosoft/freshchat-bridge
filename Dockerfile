@@ -1,6 +1,13 @@
 # Use official Node.js LTS image
 FROM node:20-alpine
 
+ARG APP_TZ=Asia/Seoul
+ENV TZ=${APP_TZ}
+
+RUN apk add --no-cache tzdata \
+	&& ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime \
+	&& echo ${TZ} > /etc/timezone
+
 # Create app directory
 WORKDIR /app
 
