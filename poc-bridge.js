@@ -2981,7 +2981,14 @@ app.use((req, res, next) => {
 });
 
 /**
- * Health check endpoint
+ * 헬스 체크 엔드포인트
+ */
+app.get('/healthz', (req, res) => {
+    return res.status(200).json({ status: 'ok' });
+});
+
+/**
+ * 상태 요약 엔드포인트
  */
 app.get('/', async (req, res) => {
     try {

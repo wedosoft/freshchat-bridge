@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Communication Guidelines
+All communication must be conducted in Korean (한국어). This includes code comments, commit messages, documentation, pull request descriptions, and all other forms of written communication related to this project.
+
 ## Project Structure & Module Organization
 The bridge runtime lives in `poc-bridge.js`, a Node.js/Express + Bot Framework service that loads configuration from `.env` and writes transient attachments to `uploads/`. Supporting assets include `scripts/` for operational utilities (for example, run `node scripts/check-freshchat-channels.js` to enumerate Freshchat inbox IDs) and `teams-app/` for the Microsoft Teams manifest, icons, and packaging helpers. Reference playbooks and deployment notes reside in `mvp-docs/`, while `.github/workflows/` contains Fly.io and Teams packaging workflows you should update alongside infrastructure changes.
 
