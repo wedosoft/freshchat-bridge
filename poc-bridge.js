@@ -6,6 +6,18 @@
  * Updated: 2025-11-10
  */
 
+// Sentry must be initialized before any other imports
+const Sentry = require('@sentry/node');
+
+Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.FLY_APP_NAME === 'freshchat-bridge-staging' ? 'staging' : 'production',
+    // Set tracesSampleRate to 1.0 to capture 100% of transactions for performance monitoring
+    tracesSampleRate: 0.1,
+    // Enable sending default PII (like user IP, etc.)
+    sendDefaultPii: true,
+});
+
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
