@@ -29,7 +29,7 @@ primary_region = "nrt"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 2048
 
 # Auto-scaling limits (비용 폭탄 방지)
 [autoscale]

@@ -39,6 +39,67 @@ if (!global.crypto) {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ============================================================================
+// LRU Cache Implementation
+// ============================================================================
+
+/**
+ * Simple LRU (Least Recently Used) Cache to prevent memory leaks
+ * Automatically removes oldest entries when max size is reached
+ */
+class LRUCache {
+    constructor(maxSize = 1000) {
+        this.maxSize = maxSize;
+        this.cache = new Map();
+    }
+
+    get(key) {
+        if (!this.cache.has(key)) {
+            return undefined;
+        }
+        // Move to end (most recently used)
+        const value = this.cache.get(key);
+        this.cache.delete(key);
+        this.cache.set(key, value);
+        return value;
+    }
+
+    set(key, value) {
+        // Delete if exists to update position
+        if (this.cache.has(key)) {
+            this.cache.delete(key);
+        }
+        // Add to end (most recently used)
+        this.cache.set(key, value);
+        
+        // Remove oldest if over capacity
+        if (this.cache.size > this.maxSize) {
+            const firstKey = this.cache.keys().next().value;
+            this.cache.delete(firstKey);
+        }
+    }
+
+    has(key) {
+        return this.cache.has(key);
+    }
+
+    delete(key) {
+        return this.cache.delete(key);
+    }
+
+    get size() {
+        return this.cache.size;
+    }
+
+    clear() {
+        this.cache.clear();
+    }
+
+    entries() {
+        return this.cache.entries();
+    }
+}
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
@@ -102,8 +163,10 @@ class ConversationStore {
         this.redis = redisInstance;
         this.prefix = options.prefix || 'freshchat_bridge';
         this.ttlSeconds = options.ttlSeconds || (30 * 24 * 60 * 60);
-        this.memory = new Map();
-        this.reverseMemory = new Map();
+        // Use LRU cache instead of regular Map to prevent unbounded growth
+        // Max 2000 conversations in memory (rest in Redis)
+        this.memory = new LRUCache(2000);
+        this.reverseMemory = new LRUCache(2000);
         this.indexKey = `${this.prefix}:conversation:teams:index`;
         this.reverseIndexKey = `${this.prefix}:conversation:freshchat:index`;
     }
@@ -429,15 +492,17 @@ const conversationStore = new ConversationStore(redisClient, {
 /**
  * Track processed Freshchat message IDs to avoid duplicate delivery.
  * Structure: { messageId: timestamp }
+ * Using LRU cache with max 2000 entries to prevent memory leak
  */
-const processedFreshchatMessages = new Map();
+const processedFreshchatMessages = new LRUCache(2000);
 const FRESHCHAT_DEDUP_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Cache for Teams user profiles to reduce Graph API calls
  * Structure: { teamsUserId: { profile, timestamp } }
+ * Using LRU cache with max 1000 entries to prevent memory leak
  */
-const userProfileCache = new Map();
+const userProfileCache = new LRUCache(1000);
 
 /**
  * Cache for help tab content
@@ -1054,8 +1119,8 @@ class FreshchatClient {
                 'Content-Type': 'application/json'
             }
         });
-        // Agent cache: Map<agentId, { name, cachedAt }>
-        this.agentCache = new Map();
+        // Agent cache with LRU to prevent unbounded growth (max 500 agents)
+        this.agentCache = new LRUCache(500);
         this.agentCacheTTL = 30 * 60 * 1000; // 30 minutes
     }
 
@@ -3021,6 +3086,14 @@ app.get('/', async (req, res) => {
                     freshchatConversationGuid: entry.mapping.freshchatConversationGuid || null
                 })),
                 localCacheSize: conversationStore.localSize
+            },
+            // LRU cache monitoring to prevent memory leaks
+            cacheStats: {
+                conversationMemory: conversationStore.memory.size,
+                conversationReverse: conversationStore.reverseMemory.size,
+                processedMessages: processedFreshchatMessages.size,
+                userProfiles: userProfileCache.size,
+                agentCache: freshchatClient.agentCache.size
             }
         });
     } catch (error) {
