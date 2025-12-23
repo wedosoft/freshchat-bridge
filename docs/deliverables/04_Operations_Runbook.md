@@ -281,6 +281,3 @@ flyctl secrets unset KEY_NAME -a freshchat-bridge
 | `POST /debug/reset` | 매핑 초기화 | 내부용 |
 | `GET /auth/permissions-status` | 권한 상태 확인 | 내부용 |
 
----
-
-**문서 종료**

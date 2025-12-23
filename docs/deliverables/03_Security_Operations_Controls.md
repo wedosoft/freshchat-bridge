@@ -170,6 +170,3 @@ flyctl apps destroy freshchat-bridge
 | Rate Limiting | ⚠️ | Freshchat API 의존 |
 | DDoS 방어 | ✅ | fly.io 기본 제공 |
 
----
-
-**문서 종료**

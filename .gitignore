@@ -24,9 +24,14 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+.tmp/
+.tmp/**
 uploads/
 teams-app/*.zip
 teams-app/temp-*/
+
+# PDF artifacts (customer-facing exports)
+docs/pdfs/
 
 # Environment-specific manifests (if they contain sensitive IDs)
 # Uncomment if you want to keep these in private config

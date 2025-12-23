@@ -252,6 +252,3 @@ sequenceDiagram
 | Monitoring | Sentry |
 | Deployment | fly.io (Docker) |
 
----
-
-**문서 종료**

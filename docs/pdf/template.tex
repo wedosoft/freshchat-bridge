@@ -1,0 +1,93 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=25mm]{geometry}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{calc}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{fontspec}
+\usepackage{xeCJK}
+
+% Pandoc helper macro (avoids "Undefined control sequence" on \tightlist)
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+% Pandoc table helper macro (used in column width calculations)
+\newcommand{\real}[1]{#1}
+
+% Pandoc image helper macro
+\providecommand{\pandocbounded}[1]{#1}
+
+\setmainfont{$if(mainfont)$$mainfont$$endif$}
+\setCJKmainfont{$if(cjkmainfont)$$cjkmainfont$$endif$}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  urlcolor=blue
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small $if(title)$$title$$endif$}
+\fancyhead[R]{\small $if(docno)$$docno$$endif$}
+\fancyfoot[C]{\small \thepage\ / \pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+
+$if(highlighting-macros)$
+$highlighting-macros$
+$endif$
+
+$if(header-includes)$
+$for(header-includes)$
+$header-includes$
+$endfor$
+$endif$
+
+\begin{document}
+
+% Title page
+\begin{titlepage}
+  \centering
+
+  $if(logo)$
+  \vspace*{5mm}
+  \includegraphics[width=0.35\textwidth]{$logo$}
+  \vspace{10mm}
+  $endif$
+
+  {\LARGE \textbf{$if(title)$$title$$endif$} \par}
+  \vspace{12mm}
+
+  \begin{tabular}{@{}ll@{}}
+  $if(docno)$\textbf{문서번호:} & $docno$ \\$endif$
+  $if(docdate)$\textbf{작성일:} & $docdate$ \\$endif$
+  $if(docauthor)$\textbf{작성자:} & $docauthor$ \\$endif$
+  \end{tabular}
+
+  \vfill
+
+  $if(confidentiality)$
+  {\small $confidentiality$ \par}
+  $endif$
+
+\end{titlepage}
+
+$if(toc)$
+\tableofcontents
+\newpage
+$endif$
+
+$body$
+
+\end{document}
